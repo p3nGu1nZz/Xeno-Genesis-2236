@@ -1,5 +1,5 @@
 import { Xenobot, Particle, Spring, Genome, CellType, SimulationConfig } from '../types';
-import { DEFAULT_CONFIG, TIMESTEP } from '../constants';
+import { DEFAULT_CONFIG, TIMESTEP, CONSTRAINT_ITERATIONS } from '../constants';
 
 const uid = () => Math.random().toString(36).substr(2, 9);
 
@@ -103,11 +103,11 @@ export class PhysicsEngine {
   update(time: number) {
     const dt = TIMESTEP;
     const dtSq = dt * dt;
+    const botCount = this.bots.length;
 
     // Optimization: Calculate collective info in a simple loop
     let totalMemory = 0;
     let livingCount = 0;
-    const botCount = this.bots.length;
     
     for(let i = 0; i < botCount; i++) {
         const b = this.bots[i];
@@ -122,14 +122,16 @@ export class PhysicsEngine {
     // Clamp
     const fluidBaseFriction = collectiveFriction < 0.85 ? 0.85 : (collectiveFriction > 0.995 ? 0.995 : collectiveFriction);
     
-    // Optimization: Removed separate visual smoothing loop.
-    // It is now integrated into updateBot's integration loop.
-
     for (let i = 0; i < botCount; i++) {
       const bot = this.bots[i];
       if (bot.isDead) continue;
       this.updateBot(bot, time, dt, dtSq, fluidBaseFriction);
     }
+  }
+
+  // Linear interpolation helper for smoothing
+  private lerp(start: number, end: number, t: number): number {
+    return start * (1 - t) + end * t;
   }
 
   private updateBot(bot: Xenobot, time: number, dt: number, dtSq: number, fluidBaseFriction: number) {
@@ -140,31 +142,31 @@ export class PhysicsEngine {
     const mSpeed = this.config.muscleSpeed;
     const plasticity = this.config.plasticity;
     const memory = bot.genome.bioelectricMemory || 0.5;
-    const syncRate = this.config.syncRate || 0.5; // Visual smoothing
-    
+    const syncRate = this.config.syncRate || 0.2; 
+    const groundY = this.groundY;
+
     const particles = bot.particles;
     const springs = bot.springs;
     const pCount = particles.length;
     const sCount = springs.length;
 
+    // Pre-calc common factors
     const chargeDensity = bot.totalCharge / (pCount || 1);
     const liftFromCharge = chargeDensity * 0.3;
     const baseBuoyancyFactor = 0.85 + liftFromCharge;
     const currentStrength = 0.08;
-    const groundY = this.groundY;
+    const invGroundY = 1.0 / groundY;
 
     // 1. Particles: Forces
-    // Converted forEach to for loop
     for (let i = 0; i < pCount; i++) {
       const p = particles[i];
       p.force.x = 0;
       p.force.y = gravity; 
 
-      // Depth
-      // Inline Clamp: Math.max(0, Math.min(1, val))
-      let depthRatio = p.pos.y / groundY;
+      // Optimized depth
+      let depthRatio = p.pos.y * invGroundY;
       if (depthRatio < 0) depthRatio = 0;
-      if (depthRatio > 1) depthRatio = 1;
+      else if (depthRatio > 1) depthRatio = 1;
 
       // Buoyancy
       const buoyancy = gravity * (baseBuoyancyFactor + depthRatio * 0.1); 
@@ -178,7 +180,6 @@ export class PhysicsEngine {
     }
 
     // 2. Springs
-    // Converted forEach to for loop
     for (let i = 0; i < sCount; i++) {
       const s = springs[i];
       const p1 = particles[s.p1];
@@ -205,13 +206,12 @@ export class PhysicsEngine {
       const forceVal = s.stiffness * diff;
 
       // Bioelectric generation
-      const stress = diff < 0 ? -diff : diff; // Math.abs
+      const stress = diff < 0 ? -diff : diff; 
       const chargeGen = stress * 0.6;
       
       if (chargeGen > 0.01) {
-        // Inlined Math.min(1, ...)
-        p1.charge = (p1.charge + chargeGen > 1) ? 1 : (p1.charge + chargeGen);
-        p2.charge = (p2.charge + chargeGen > 1) ? 1 : (p2.charge + chargeGen);
+        if (p1.charge + chargeGen > 1) p1.charge = 1; else p1.charge += chargeGen;
+        if (p2.charge + chargeGen > 1) p2.charge = 1; else p2.charge += chargeGen;
       }
       activeCharge += (p1.charge + p2.charge);
 
@@ -236,16 +236,18 @@ export class PhysicsEngine {
     // 3. Integration & Collision & Visual Smoothing
     let cx = 0, cy = 0;
     
-    // Pre-calculate loop invariants
     const chargeDrag = 1.0 - (chargeDensity * 0.15);
     const individualFactor = 1.0 + (memory * 0.005);
     const baseFriction = fluidBaseFriction * individualFactor * chargeDrag;
+    
+    // Clamp sync rate to prevent instability (0 < syncRate <= 1)
+    const smoothing = Math.max(0.01, Math.min(1.0, syncRate));
 
     for (let i = 0; i < pCount; i++) {
       const p = particles[i];
       
       // Depth Viscosity
-      let depthVal = p.pos.y / groundY;
+      let depthVal = p.pos.y * invGroundY;
       if (depthVal < 0) depthVal = 0;
       const depthViscosity = 1.0 - (depthVal * 0.03);
       
@@ -260,23 +262,23 @@ export class PhysicsEngine {
       p.pos.x += vx + p.force.x * dtSq;
       p.pos.y += vy + p.force.y * dtSq;
 
+      // Simple floor constraint here
+      
       // Bottom Constraint
       if (p.pos.y > groundY) {
         p.pos.y = groundY;
         const vy_impact = (p.pos.y - p.oldPos.y);
         p.oldPos.y = p.pos.y + vy_impact * 0.6; 
       }
-
       // Top Constraint
       if (p.pos.y < -2000) {
           p.pos.y = -2000;
           p.oldPos.y = p.pos.y;
       }
 
-      // --- VISUAL SMOOTHING INTEGRATED ---
-      // Simple Lerp
-      p.renderPos.x += (p.pos.x - p.renderPos.x) * syncRate;
-      p.renderPos.y += (p.pos.y - p.renderPos.y) * syncRate;
+      // Visual Smoothing: Apply lerp
+      p.renderPos.x = this.lerp(p.renderPos.x, p.pos.x, smoothing);
+      p.renderPos.y = this.lerp(p.renderPos.y, p.pos.y, smoothing);
 
       cx += p.pos.x;
       cy += p.pos.y;
@@ -290,6 +292,6 @@ export class PhysicsEngine {
 
   evaluateFitness(bot: Xenobot): number {
     const dist = bot.centerOfMass.x - bot.startPosition.x;
-    return dist < 0 ? 0 : dist; // Math.max(0, dist)
+    return dist < 0 ? 0 : dist; 
   }
 }

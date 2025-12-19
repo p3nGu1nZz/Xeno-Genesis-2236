@@ -28,4 +28,5 @@ export const COLORS = {
 };
 
 export const TIMESTEP = 1;
-export const CONSTRAINT_ITERATIONS = 8;
+// Optimized: Reduced from 8 to 6 for better performance while maintaining stability
+export const CONSTRAINT_ITERATIONS = 6;

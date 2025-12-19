@@ -7,7 +7,7 @@ import { GenomeVisualizer } from './components/GenomeVisualizer';
 import { TitleScreen } from './components/TitleScreen';
 import { SettingsPanel } from './components/SettingsPanel';
 import { HelpModal } from './components/HelpModal';
-import { Xenobot, Genome, AnalysisResult, CameraState, SimulationConfig, SaveData, TickPayload } from './types';
+import { Xenobot, Genome, AnalysisResult, CameraState, SimulationConfig, SaveData } from './types';
 import { DEFAULT_CONFIG } from './constants';
 import { ScanEye } from 'lucide-react';
 import { PhysicsEngine } from './services/physicsEngine';
@@ -33,10 +33,12 @@ const App: React.FC = () => {
   // We use a Ref for bots to pass to Canvas to avoid re-renders
   const botsRef = useRef<Xenobot[]>([]); 
   
-  const [bestGenome, setBestGenome] = useState<Genome | null>(null);
+  // Track best genomes for each group independently
+  const [bestGenomeA, setBestGenomeA] = useState<Genome | null>(null);
+  const [bestGenomeB, setBestGenomeB] = useState<Genome | null>(null);
   
   // Camera State
-  const [camera, setCamera] = useState<CameraState>({ x: 0, y: 0, zoom: 1 });
+  const [camera, setCamera] = useState<CameraState>({ x: 0, y: 0, zoom: 0.55 });
   const keysPressed = useRef<Set<string>>(new Set());
   
   // Analysis State
@@ -55,13 +57,27 @@ const App: React.FC = () => {
     const engine = new PhysicsEngine(cfg);
     
     let pop = startPop;
+    const currentGen = startGen || 1;
+
+    // Population Initialization Strategy
     if (!pop || pop.length === 0) {
-        pop = Array(cfg.populationSize).fill(null).map(() => createRandomGenome(1));
+        // Create 2 Distinct Groups for interaction
+        const sizeA = Math.floor(cfg.populationSize / 2);
+        const sizeB = cfg.populationSize - sizeA;
+        
+        // Group A: "Natives" (Cyan/Blue range ~190)
+        const groupA = Array(sizeA).fill(null).map(() => createRandomGenome(currentGen, 190)); 
+        
+        // Group B: "Invaders" (Magenta/Red range ~340)
+        const groupB = Array(sizeB).fill(null).map(() => createRandomGenome(currentGen, 340)); 
+        
+        pop = [...groupA, ...groupB];
     } else {
         // Resize population if config changed
         if (pop.length < cfg.populationSize) {
              const needed = cfg.populationSize - pop.length;
-             const extras = Array(needed).fill(null).map(() => createRandomGenome(startGen || 1));
+             // Newcomers get random colors
+             const extras = Array(needed).fill(null).map(() => createRandomGenome(currentGen));
              pop = [...pop, ...extras];
         } else if (pop.length > cfg.populationSize) {
              pop = pop.slice(0, cfg.populationSize);
@@ -69,18 +85,34 @@ const App: React.FC = () => {
     }
 
     populationRef.current = pop;
-    const currentGen = startGen || 1;
     setGeneration(currentGen);
 
-    // Create Bots
-    engine.bots = pop.map(g => engine.createBot(g, 100, 200));
+    // Create Bots with Position Logic
+    engine.bots = pop.map((g, i) => {
+        let startX = 100;
+        
+        // Initial setup for Gen 1: Split positions SIGNIFICANTLY to create distinct groups
+        if (currentGen === 1 && !startPop) {
+           const midPoint = Math.floor(cfg.populationSize / 2);
+           const isGroupA = i < midPoint;
+           // Group A at 0, Group B at 1200. Far apart start.
+           startX = isGroupA ? 0 : 1200; 
+        } else {
+           // Subsequent generations or loads: Spawn near start with some variance
+           startX = 50 + Math.random() * 200;
+        }
+
+        const startY = 200 + Math.random() * 100; // Randomize height slightly
+        return engine.createBot(g, startX, startY);
+    });
     
     engineRef.current = engine;
     botsRef.current = engine.bots;
     
     timeLeftRef.current = cfg.generationDuration || 600;
     setTimeLeft(timeLeftRef.current);
-    setBestGenome(null);
+    setBestGenomeA(null);
+    setBestGenomeB(null);
   }, []);
 
   const evolve = useCallback(() => {
@@ -96,10 +128,22 @@ const App: React.FC = () => {
 
       // 2. Sort & Pick Best
       const sorted = [...evaluatedGenomes].sort((a, b) => b.fitness - a.fitness);
-      const best = sorted[0];
-      setBestGenome(best);
+      
+      // Update Bests for display (heuristic based on hue)
+      const isCyan = (g: Genome) => {
+        const match = g.color.match(/hsl\((\d+\.?\d*)/);
+        if(!match) return false;
+        const h = parseFloat(match[1]);
+        return (h > 150 && h < 230);
+      };
+      
+      const bestCyan = sorted.find(g => isCyan(g)) || null;
+      const bestMagenta = sorted.find(g => !isCyan(g)) || null;
+      
+      setBestGenomeA(bestCyan);
+      setBestGenomeB(bestMagenta);
 
-      // 3. Evolve
+      // 3. Evolve (Global pool - survival of the fittest mixes the groups)
       const nextGen = evolvePopulation(evaluatedGenomes, generation);
       populationRef.current = nextGen;
       
@@ -107,7 +151,12 @@ const App: React.FC = () => {
       setGeneration(nextGenNum);
 
       // 4. Rebuild Physics World
-      engineRef.current.bots = nextGen.map(g => engineRef.current!.createBot(g, 100, 200));
+      // In later generations, we spawn them mixed to simulate the resulting population
+      engineRef.current.bots = nextGen.map(g => {
+          const startX = 50 + Math.random() * 250;
+          const startY = 200 + Math.random() * 100;
+          return engineRef.current!.createBot(g, startX, startY);
+      });
       botsRef.current = engineRef.current.bots;
 
       // 5. Reset Timer
@@ -124,18 +173,33 @@ const App: React.FC = () => {
 
       // Update Timer
       timeLeftRef.current -= 1;
-      
-      // Sync UI less frequently to save performance? 
-      // For smoothness we do every frame, but we could throttle this.
       setTimeLeft(timeLeftRef.current);
 
-      // Find best for realtime feedback (optional, maybe expensive every frame)
-      // let maxFit = -Infinity;
-      // let leader = null;
-      // engineRef.current.bots.forEach(b => {
-      //   if (b.centerOfMass.x > maxFit) { maxFit = b.centerOfMass.x; leader = b; }
-      // });
-      // if (leader) setBestGenome(leader.genome);
+      // Realtime Best Tracking (Throttle this if performance is an issue, but okay for now)
+      if (timeLeftRef.current % 10 === 0) { // Update stats every 10 ticks
+        let bestA: Genome | null = null;
+        let maxFitA = -Infinity;
+        let bestB: Genome | null = null;
+        let maxFitB = -Infinity;
+
+        engineRef.current.bots.forEach(b => {
+             const x = b.centerOfMass.x;
+             // Check Hue
+             const match = b.genome.color.match(/hsl\((\d+\.?\d*)/);
+             const h = match ? parseFloat(match[1]) : 0;
+             const isCyan = (h > 150 && h < 230);
+
+             if (isCyan) {
+                 if (x > maxFitA) { maxFitA = x; bestA = b.genome; }
+             } else {
+                 if (x > maxFitB) { maxFitB = x; bestB = b.genome; }
+             }
+        });
+        
+        // Only update state if we found something, to prevent flickering
+        if (bestA) setBestGenomeA({...bestA, fitness: maxFitA});
+        if (bestB) setBestGenomeB({...bestB, fitness: maxFitB});
+      }
 
       if (timeLeftRef.current <= 0) {
           evolve();
@@ -147,12 +211,20 @@ const App: React.FC = () => {
       return populationRef.current;
   };
 
-  const getCenteredCamera = (width: number, height: number, zoom: number = 1.0) => {
-    const targetX = 250;
-    const targetY = 350;
+  const getCenteredCamera = (width: number, height: number, zoom: number = 0.55) => {
+    // Center the camera between the two starting groups roughly (0 and 1200) -> 600
+    // We target x=600 and y=600 to see the fall and the ground.
+    const targetX = 600;
+    const targetY = 600; 
+    
+    // Logic matched to SimulationCanvas translation:
+    // ctx.translate(width/2, height/2)
+    // ctx.scale(zoom, zoom)
+    // ctx.translate(-width/2 + x, -height/2 + y)
+    // Resulting Camera offset X/Y needed to center TargetX/TargetY:
     return {
-        x: (width / 2) / zoom - targetX,
-        y: (height / 2) / zoom - targetY,
+        x: width / 2 - targetX,
+        y: height / 2 - targetY,
         zoom
     };
   };
@@ -184,7 +256,8 @@ const App: React.FC = () => {
   const startNewSimulation = () => {
     setAppState('SIMULATION');
     initSimulation(config);
-    setCamera(getCenteredCamera(window.innerWidth, window.innerHeight, 1.0));
+    // Start zoomed out to see both groups
+    setCamera(getCenteredCamera(window.innerWidth, window.innerHeight, 0.55));
     setShowHelp(true); 
     setIsRunning(true);
   };
@@ -255,15 +328,17 @@ const App: React.FC = () => {
   // --- Interactions ---
 
   const handleAnalyze = async () => {
-    if (!bestGenome) return;
+    // Analyze the global best, or default to A
+    const target = bestGenomeA || bestGenomeB;
+    if (!target) return;
     setIsAnalyzing(true);
-    const result = await analyzeXenobot(bestGenome, generation);
+    const result = await analyzeXenobot(target, generation);
     setAnalysisResult(result);
     setIsAnalyzing(false);
   };
 
   const resetCamera = () => {
-      setCamera(getCenteredCamera(window.innerWidth, window.innerHeight, 1.0));
+      setCamera(getCenteredCamera(window.innerWidth, window.innerHeight, 0.55));
   };
 
   // --- Render ---
@@ -314,9 +389,9 @@ const App: React.FC = () => {
       <div className="absolute top-0 right-0 w-full p-4 pointer-events-none flex justify-end items-start z-20">
             {/* Physics Stats (Positioned relative to Controls) */}
             <div className="absolute top-4 left-80 ml-6 bg-slate-900/50 backdrop-blur border border-slate-700 p-2 rounded text-xs text-slate-400">
-                <div>PHYSICS_ENGINE: MAIN_THREAD_FALLBACK</div>
+                <div>PHYSICS_ENGINE: MAIN_THREAD_OPTIMIZED</div>
                 <div>GRAVITY: {config.gravity.toFixed(2)} m/s²</div>
-                <div>POPULATION: {config.populationSize}</div>
+                <div>POPULATION: {config.populationSize} (A vs B)</div>
                 <div>TRAINING_DURATION: {config.generationDuration || 600}</div>
             </div>
             
@@ -336,8 +411,20 @@ const App: React.FC = () => {
             <div>[Q / E] ZOOM LEVEL</div>
       </div>
 
-      {/* FLOATING PANELS */}
-      <GenomeVisualizer genome={bestGenome} />
+      {/* FLOATING PANELS: Dual Genome Visualizers */}
+      <GenomeVisualizer 
+        genome={bestGenomeA} 
+        label="GROUP A (NATIVES)" 
+        borderColor="border-neon-cyan/50" 
+        className="bottom-6 left-96" // Positioned to the right of controls
+      />
+      
+      <GenomeVisualizer 
+        genome={bestGenomeB} 
+        label="GROUP B (INVADERS)" 
+        borderColor="border-neon-magenta/50" 
+        className="bottom-6 right-6" // Positioned at far right
+      />
       
       <AnalysisPanel 
         result={analysisResult} 

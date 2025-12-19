@@ -3,7 +3,7 @@ import { GRID_SIZE } from '../constants';
 
 const MUTATION_RATE = 0.2; // Higher rate for dynamic evolution
 
-export function createRandomGenome(generation: number = 0): Genome {
+export function createRandomGenome(generation: number = 0, targetHue?: number): Genome {
   const genes: CellType[][] = [];
   for (let y = 0; y < GRID_SIZE; y++) {
     const row: CellType[] = [];
@@ -20,13 +20,25 @@ export function createRandomGenome(generation: number = 0): Genome {
   // Ensure center is solid
   genes[Math.floor(GRID_SIZE/2)][Math.floor(GRID_SIZE/2)] = CellType.SKIN;
 
+  // Color generation: Use targetHue if provided, otherwise random.
+  // We add variance (+/- 20 degrees) to the target hue so they aren't identical.
+  let h: number;
+  if (targetHue !== undefined) {
+      h = (targetHue + (Math.random() * 40 - 20)) % 360;
+  } else {
+      h = Math.random() * 360;
+  }
+  if (h < 0) h += 360;
+  
+  const color = `hsl(${h.toFixed(0)}, 70%, 60%)`;
+
   return {
     id: Math.random().toString(36).substr(2, 9),
     gridSize: GRID_SIZE,
     genes,
     fitness: 0,
     generation,
-    color: `hsl(${Math.random() * 360}, 70%, 60%)`,
+    color,
     bioelectricMemory: Math.random()
   };
 }
@@ -44,13 +56,16 @@ function crossover(parentA: Genome, parentB: Genome, generation: number): Genome
     newGenes.push(row);
   }
 
+  // Inherit color from one parent to maintain lineage visuals
+  const color = Math.random() > 0.5 ? parentA.color : parentB.color;
+
   return {
     id: Math.random().toString(36).substr(2, 9),
     gridSize: size,
     genes: newGenes,
     fitness: 0,
     generation,
-    color: Math.random() > 0.5 ? parentA.color : parentB.color,
+    color,
     bioelectricMemory: (parentA.bioelectricMemory + parentB.bioelectricMemory) / 2
   };
 }
@@ -112,7 +127,7 @@ function adjustColor(hsl: string): string {
     const match = hsl.match(/hsl\((\d+\.?\d*),\s*(\d+)%,\s*(\d+)%\)/);
     if (!match) return hsl;
     let h = parseFloat(match[1]);
-    h = (h + (Math.random() * 40 - 20)) % 360;
+    h = (h + (Math.random() * 20 - 10)) % 360; // Slight shift
     if (h < 0) h += 360;
     return `hsl(${h.toFixed(0)}, ${match[2]}%, ${match[3]}%)`;
 }

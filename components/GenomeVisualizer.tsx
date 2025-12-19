@@ -5,41 +5,49 @@ import { Dna } from 'lucide-react';
 
 interface GenomeVisualizerProps {
   genome: Genome | null;
+  label?: string;
+  borderColor?: string;
+  className?: string;
 }
 
-export const GenomeVisualizer: React.FC<GenomeVisualizerProps> = ({ genome }) => {
+export const GenomeVisualizer: React.FC<GenomeVisualizerProps> = ({ 
+  genome, 
+  label = "GENOME MAP", 
+  borderColor = "border-slate-700",
+  className = "bottom-6 right-6" 
+}) => {
   if (!genome) return null;
 
   const size = genome.gridSize;
 
   return (
-    <div className="absolute bottom-6 right-6 w-64 bg-slate-900/90 border border-slate-700 rounded-lg p-4 backdrop-blur shadow-2xl z-20">
-      <div className="flex items-center gap-2 mb-3 text-neon-cyan border-b border-slate-700 pb-2">
+    <div className={`absolute w-64 bg-slate-900/90 border ${borderColor} rounded-lg p-4 backdrop-blur shadow-2xl z-20 transition-all duration-500 ${className}`}>
+      <div className="flex items-center gap-2 mb-3 text-slate-300 border-b border-white/10 pb-2">
         <Dna size={18} />
-        <span className="font-display font-bold text-sm">GENOME MAP</span>
+        <span className="font-display font-bold text-sm text-white">{label}</span>
       </div>
 
       <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${size}, 1fr)` }}>
         {genome.genes.map((row, y) => (
           row.map((cell, x) => {
             let style: React.CSSProperties = {};
-            let className = "aspect-square rounded-sm transition-all duration-300 ";
+            let cellClass = "aspect-square rounded-sm transition-all duration-300 ";
 
             if (cell === CellType.SKIN) {
                 style.backgroundColor = genome.color;
                 style.boxShadow = `0 0 5px ${genome.color}`;
             } else if (cell === CellType.HEART) {
-                className += "bg-red-500 shadow-[0_0_5px_#ef4444]";
+                cellClass += "bg-red-500 shadow-[0_0_5px_#ef4444]";
             } else if (cell === CellType.NEURON) {
-                className += "bg-yellow-500 shadow-[0_0_5px_#eab308]";
+                cellClass += "bg-yellow-500 shadow-[0_0_5px_#eab308]";
             } else {
-                className += "bg-slate-800";
+                cellClass += "bg-slate-800/50";
             }
             
             return (
               <div 
                 key={`${x}-${y}`} 
-                className={className}
+                className={cellClass}
                 style={style}
               />
             );
@@ -51,6 +59,10 @@ export const GenomeVisualizer: React.FC<GenomeVisualizerProps> = ({ genome }) =>
         <div className="flex justify-between">
             <span>ID:</span>
             <span className="text-white">{genome.id}</span>
+        </div>
+        <div className="flex justify-between">
+            <span>FITNESS:</span>
+            <span className="text-white">{genome.fitness.toFixed(1)}</span>
         </div>
         <div className="flex justify-between">
             <span>PLASTICITY:</span>

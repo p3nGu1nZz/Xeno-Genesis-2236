@@ -3,7 +3,42 @@ import { GRID_SIZE } from '../constants';
 
 const MUTATION_RATE = 0.2; 
 
+// "Nervous Ring" Topology Definition
+// Central 2x2 Core: NEURON
+// Surrounding Ring: Alternating HEART / SKIN
+const PLATONIC_IDEAL_MAP: Record<string, CellType> = {};
+
+// Initialize the ideal map
+for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+        const key = `${x},${y}`;
+        // Center 2x2 (Indices 2,3 for GRID_SIZE 6)
+        if (x >= 2 && x <= 3 && y >= 2 && y <= 3) {
+            PLATONIC_IDEAL_MAP[key] = CellType.NEURON;
+        }
+        // Ring 1 (Indices 1 to 4)
+        else if (x >= 1 && x <= 4 && y >= 1 && y <= 4) {
+            // Alternating pattern for the ring
+            if ((x + y) % 2 === 0) {
+                PLATONIC_IDEAL_MAP[key] = CellType.HEART;
+            } else {
+                PLATONIC_IDEAL_MAP[key] = CellType.SKIN;
+            }
+        } 
+        // Outer shell
+        else {
+            PLATONIC_IDEAL_MAP[key] = CellType.EMPTY;
+        }
+    }
+}
+
 export function createRandomGenome(generation: number = 0, targetHue?: number): Genome {
+  // 20% Chance to spawn a "Prophet" bot that adheres to the Nervous Ring topology
+  // This helps seed the population with the desired trait if extinction occurs.
+  if (Math.random() < 0.2) {
+      return createNervousRingGenome(generation, targetHue);
+  }
+
   const genes: CellType[][] = [];
   for (let y = 0; y < GRID_SIZE; y++) {
     const row: CellType[] = [];
@@ -17,6 +52,7 @@ export function createRandomGenome(generation: number = 0, targetHue?: number): 
     genes.push(row);
   }
   
+  // Ensure center has some structure so it's not empty
   genes[Math.floor(GRID_SIZE/2)][Math.floor(GRID_SIZE/2)] = CellType.SKIN;
 
   let h: number;
@@ -40,6 +76,35 @@ export function createRandomGenome(generation: number = 0, targetHue?: number): 
   };
 }
 
+function createNervousRingGenome(generation: number, targetHue?: number): Genome {
+    const genes: CellType[][] = [];
+    for (let y = 0; y < GRID_SIZE; y++) {
+        const row: CellType[] = [];
+        for (let x = 0; x < GRID_SIZE; x++) {
+            row.push(PLATONIC_IDEAL_MAP[`${x},${y}`] || CellType.EMPTY);
+        }
+        genes.push(row);
+    }
+
+    let h: number;
+    if (targetHue !== undefined) {
+        h = (targetHue + (Math.random() * 20 - 10)) % 360;
+    } else {
+        h = Math.random() * 360;
+    }
+    if (h < 0) h += 360;
+
+    return {
+        id: "PLATONIC-" + Math.random().toString(36).substr(2, 6),
+        gridSize: GRID_SIZE,
+        genes,
+        fitness: 0,
+        generation,
+        color: `hsl(${h.toFixed(0)}, 80%, 50%)`, // Slightly brighter to indicate special status
+        bioelectricMemory: 0.8 // High plasticity to adapt quickly
+    };
+}
+
 function crossover(parentA: Genome, parentB: Genome, generation: number): Genome {
   const newGenes: CellType[][] = [];
   const size = parentA.gridSize;
@@ -54,20 +119,15 @@ function crossover(parentA: Genome, parentB: Genome, generation: number): Genome
 
   const color = Math.random() > 0.5 ? parentA.color : parentB.color;
 
-  // Inherit spatial position.
-  // Use a default fallback if originX is missing, though App logic should ensure it exists.
   const posA = parentA.originX ?? 0;
   const posB = parentB.originX ?? 0;
   
   const dist = Math.abs(posA - posB);
   let originX = posA;
   
-  // If parents are physically close (same group cluster), average their position for smooth movement.
   if (dist < 300) {
       originX = (posA + posB) / 2;
   } else {
-      // If parents are far apart (inter-species breeding?), stick to the location of the parent
-      // whose color/traits we primarily inherited, or just random to avoid teleporting to the middle of nowhere.
       originX = (color === parentA.color) ? posA : posB;
   }
 
@@ -87,7 +147,7 @@ function mutate(genome: Genome): Genome {
   const newGenes = genome.genes.map(row => [...row]);
   let mutated = false;
   
-  // Structural growth
+  // 1. Structural Growth / Decay
   if (Math.random() < 0.3) {
     for (let y = 1; y < genome.gridSize - 1; y++) {
       for (let x = 1; x < genome.gridSize - 1; x++) {
@@ -102,7 +162,23 @@ function mutate(genome: Genome): Genome {
     }
   }
 
-  // Standard Mutation
+  // 2. Platonic Pull (The bias towards Nervous Ring)
+  // Small chance for any cell to spontaneously align with the Platonic Ideal
+  if (Math.random() < 0.4) { // 40% chance that a mutation event includes a platonic shift
+      const x = Math.floor(Math.random() * genome.gridSize);
+      const y = Math.floor(Math.random() * genome.gridSize);
+      const idealType = PLATONIC_IDEAL_MAP[`${x},${y}`];
+      
+      if (idealType !== undefined && newGenes[y][x] !== idealType) {
+          // 10% chance to flip to ideal if selected
+          if (Math.random() < 0.1) {
+              newGenes[y][x] = idealType;
+              mutated = true;
+          }
+      }
+  }
+
+  // 3. Random Noise Mutation
   for (let y = 0; y < genome.gridSize; y++) {
     for (let x = 0; x < genome.gridSize; x++) {
       if (Math.random() < 0.05) {

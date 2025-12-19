@@ -1,3 +1,4 @@
+
 import { GoogleGenAI } from "@google/genai";
 import { Genome, CellType, AnalysisResult } from '../types';
 
@@ -40,14 +41,14 @@ export const analyzeXenobot = async (genome: Genome, generationCount: number): P
 
     Context:
     - This organism evolves via a Genetic Algorithm but also exhibits "Agential Material" properties.
-    - "Bioelectric Memory" (0.0-1.0) controls how fast the physical structure adapts to stress (plasticity). High memory means faster learning/remodeling.
-    - Cells (Skin/S, Heart/H, Neuron/N) form a bioelectric network.
-    - We are looking for the "Cognitive Light Cone" - how well the parts coordinate towards a macro-goal (locomotion).
+    - "Bioelectric Memory" (0.0-1.0) controls how fast the physical structure adapts to stress (plasticity).
+    - We are currently observing a need for "Bilateral Polarity".
+    - Anterior should contain Neurons (Sensory/Structural). Posterior should contain Heart cells (Propulsion).
 
     Tasks:
     1. Analyze the morphology. Is there a clear "Cognitive Light Cone" or are the parts acting as individual cells?
-    2. Comment on the 'Bioelectric Memory' level. Is high plasticity helping or hindering this specific shape?
-    3. Suggest a "Target Morphology" in Platonic Space for the next evolutionary step.
+    2. Suggest a "Target Morphology" that introduces Bilateral Polarity (Neurons leading, Heart trailing).
+    3. We need to 'canalize' the recent gains. Suggest reducing Bioelectric Memory to approx 0.60 to prevent over-remodeling.
 
     Output (JSON):
     {

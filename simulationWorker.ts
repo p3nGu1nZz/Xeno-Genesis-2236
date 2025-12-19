@@ -8,6 +8,10 @@ let engine: PhysicsEngine | null = null;
 let isRunning = false;
 let timerId: any = null;
 let lastTime = performance.now();
+let accumulator = 0;
+let simulationTime = 0; // Track total simulation time in ms
+const FIXED_TIMESTEP = 16; // Target 60fps (approx 16.66ms)
+
 let evolutionTimer = 0;
 let generation = 1;
 let population: Genome[] = [];
@@ -83,6 +87,7 @@ const initSimulation = (config: SimulationConfig, startPop?: Genome[], startGen?
   
   evolutionTimer = 0;
   bestGenome = null;
+  simulationTime = 0;
 };
 
 const evolveContinuous = () => {
@@ -145,31 +150,47 @@ const loop = () => {
   if (!isRunning || !engine) return;
 
   const now = performance.now();
-  // const dt = (now - lastTime) / 1000;
+  let frameTime = now - lastTime;
   lastTime = now;
 
-  // Update Physics
-  engine.update(now / 1000);
+  // Clamp frameTime to avoid spiral of death (e.g. if tab was inactive)
+  if (frameTime > 250) frameTime = 250;
 
-  // Update Best Genome Tracking
-  updateBestGenome();
+  accumulator += frameTime;
 
-  // Handle Continuous Evolution
-  evolutionTimer += 1;
-  if (evolutionTimer >= EVOLUTION_INTERVAL) {
-      evolveContinuous();
-      evolutionTimer = 0;
+  // Fixed Timestep Update Loop
+  while (accumulator >= FIXED_TIMESTEP) {
+      engine.update(simulationTime / 1000); // Pass time in seconds for muscle phases
+      simulationTime += FIXED_TIMESTEP;
+      
+      updateBestGenome(); // Update stats each tick or just once per frame? Doing it here ensures accuracy.
+
+      // Evolution Check
+      evolutionTimer += 1;
+      if (evolutionTimer >= EVOLUTION_INTERVAL) {
+          evolveContinuous();
+          evolutionTimer = 0;
+      }
+      
+      accumulator -= FIXED_TIMESTEP;
   }
+  
+  // Apply smoothing once per frame for consistent visual output
+  engine.smoothRenderPositions();
 
   // Send Data to Main Thread
   const payload = {
       bots: engine.bots,
-      timeLeft: 0, // Ignored
+      timeLeft: 0, 
       generation,
       bestGenome
   };
 
   self.postMessage({ type: 'TICK', payload });
+  
+  if (isRunning) {
+      timerId = setTimeout(loop, 16); // Schedule next loop
+  }
 };
 
 self.onmessage = (e: MessageEvent<WorkerMessage>) => {
@@ -181,17 +202,18 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
       break;
 
     case 'START':
-      isRunning = true;
-      lastTime = performance.now();
-      if (!timerId) {
-          timerId = setInterval(loop, 16); 
+      if (!isRunning) {
+          isRunning = true;
+          lastTime = performance.now();
+          accumulator = 0;
+          loop();
       }
       break;
 
     case 'STOP':
       isRunning = false;
       if (timerId) {
-          clearInterval(timerId);
+          clearTimeout(timerId);
           timerId = null;
       }
       break;

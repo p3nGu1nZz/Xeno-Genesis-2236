@@ -1,5 +1,6 @@
+
 import { Xenobot, Particle, Spring, Genome, CellType, SimulationConfig } from '../types';
-import { DEFAULT_CONFIG, TIMESTEP, CONSTRAINT_ITERATIONS } from '../constants';
+import { DEFAULT_CONFIG, TIMESTEP, CONSTRAINT_ITERATIONS, CILIA_FORCE, METABOLIC_DECAY, INITIAL_YOLK_ENERGY, SURFACE_TENSION } from '../constants';
 
 const uid = () => Math.random().toString(36).substr(2, 9);
 
@@ -91,7 +92,7 @@ export class PhysicsEngine {
 
     const match = genome.color.match(/hsl\((\d+\.?\d*)/);
     const hue = match ? parseFloat(match[1]) : 0;
-    const isGroupA = (hue > 150 && hue < 230); // Cyan/Blue
+    const isGroupA = (hue > 150 && hue < 230); 
     const groupId = isGroupA ? 0 : 1;
 
     return {
@@ -103,7 +104,9 @@ export class PhysicsEngine {
       startPosition: { x: startX, y: startY },
       isDead: false,
       totalCharge: 0,
-      groupId
+      groupId,
+      energy: INITIAL_YOLK_ENERGY,
+      age: 0
     };
   }
 
@@ -127,7 +130,7 @@ export class PhysicsEngine {
     const collectiveFriction = this.config.friction + (avgMemory - 0.5) * 0.08;
     const fluidBaseFriction = collectiveFriction < 0.85 ? 0.85 : (collectiveFriction > 0.995 ? 0.995 : collectiveFriction);
     
-    // Apply Social Forces (Repulsion & Organization)
+    // Apply Social Forces
     if (botCount > 1) {
         this.applySocialForces(botCount);
     }
@@ -137,14 +140,35 @@ export class PhysicsEngine {
       if (bot.isDead) continue;
       this.updateBot(bot, time, dt, dtSq, fluidBaseFriction);
     }
+    
+    // Apply smoothing at the end of the physics step
+    this.smoothRenderPositions();
+  }
+  
+  smoothRenderPositions() {
+    const smoothing = Math.max(0.01, Math.min(1.0, this.config.syncRate || 0.2));
+    
+    const botCount = this.bots.length;
+    for (let i = 0; i < botCount; i++) {
+        const bot = this.bots[i];
+        if (bot.isDead) continue;
+        
+        const particles = bot.particles;
+        const pCount = particles.length;
+        
+        for (let j = 0; j < pCount; j++) {
+            const p = particles[j];
+            // Linear Interpolation (Lerp) to smooth out high-frequency physics jitter
+            p.renderPos.x = this.lerp(p.renderPos.x, p.pos.x, smoothing);
+            p.renderPos.y = this.lerp(p.renderPos.y, p.pos.y, smoothing);
+        }
+    }
   }
 
-  // Improved Social Forces: Repels enemies strongly, organizes allies gently
   private applySocialForces(botCount: number) {
       const GROUP_REPULSION_RADIUS = 300; 
       const GROUP_FORCE = 0.8; 
-      
-      const SELF_REPULSION_RADIUS = 80; // "Personal space" for organization
+      const SELF_REPULSION_RADIUS = 80; 
       const SELF_FORCE = 0.1;
 
       for (let i = 0; i < botCount; i++) {
@@ -161,30 +185,23 @@ export class PhysicsEngine {
 
               if (distSq < 0.1) continue; 
 
-              // Scenario 1: Different Group -> Strong Avoidance
               if (b1.groupId !== b2.groupId) {
                   if (distSq < GROUP_REPULSION_RADIUS * GROUP_REPULSION_RADIUS) {
                       const dist = Math.sqrt(distSq);
                       const overlap = GROUP_REPULSION_RADIUS - dist;
                       const f = (overlap / GROUP_REPULSION_RADIUS) * GROUP_FORCE;
-                      
                       const fx = (dx / dist) * f;
                       const fy = (dy / dist) * f;
-
                       this.applyForceToBot(b1, fx, fy);
                       this.applyForceToBot(b2, -fx, -fy);
                   }
-              } 
-              // Scenario 2: Same Group -> Mild Organization (Prevent Stacking)
-              else {
+              } else {
                    if (distSq < SELF_REPULSION_RADIUS * SELF_REPULSION_RADIUS) {
                       const dist = Math.sqrt(distSq);
                       const overlap = SELF_REPULSION_RADIUS - dist;
                       const f = (overlap / SELF_REPULSION_RADIUS) * SELF_FORCE;
-                      
                       const fx = (dx / dist) * f;
                       const fy = (dy / dist) * f;
-                      
                       this.applyForceToBot(b1, fx, fy);
                       this.applyForceToBot(b2, -fx, -fy);
                    }
@@ -196,7 +213,6 @@ export class PhysicsEngine {
   private applyForceToBot(bot: Xenobot, fx: number, fy: number) {
       const count = bot.particles.length;
       if (count === 0) return;
-      // Distribute force across particles so the bot moves as a unit
       const pFx = fx / count;
       const pFy = fy / count;
       for (const p of bot.particles) {
@@ -217,8 +233,19 @@ export class PhysicsEngine {
     const mSpeed = this.config.muscleSpeed;
     const plasticity = this.config.plasticity;
     const memory = bot.genome.bioelectricMemory || 0.5;
-    const syncRate = this.config.syncRate || 0.2; 
     const groundY = this.groundY;
+    const acousticActive = this.config.acousticFreq > 100; // Trigger threshold
+
+    // Metabolic cost: Existence consumes energy
+    bot.energy -= METABOLIC_DECAY;
+    bot.age++;
+
+    // "Thanatotranscriptome": If energy depleted, bot dies (stops moving)
+    if (bot.energy <= 0) {
+        bot.isDead = true;
+        // Optionally turn color gray here in renderer, but logic stops here
+        return; 
+    }
 
     const particles = bot.particles;
     const springs = bot.springs;
@@ -231,8 +258,11 @@ export class PhysicsEngine {
     const currentStrength = 0.08;
     const invGroundY = 1.0 / groundY;
 
+    // Apply Ciliary Forces & Environmental Forces
     for (let i = 0; i < pCount; i++) {
       const p = particles[i];
+      
+      // Gravity & Buoyancy
       p.force.x = 0;
       p.force.y = gravity; 
 
@@ -245,10 +275,67 @@ export class PhysicsEngine {
 
       const currentFlow = Math.sin(time * 0.5 + depthRatio * 4.0) * currentStrength;
       p.force.x += currentFlow;
+      
+      // --- BROWNIAN / CELLULAR NOISE ---
+      // Simulates the inherent noisy environment of micro-scale biology and individual cilia beating independently
+      // This is crucial for the "stochastic stutter-crawl" mentioned in the 2025 paper.
+      p.force.x += (Math.random() - 0.5) * 0.5;
+      p.force.y += (Math.random() - 0.5) * 0.5;
+
+      // --- CILIARY PROPULSION (Basal Motility) ---
+      const dx = p.pos.x - bot.centerOfMass.x;
+
+      if (acousticActive) {
+          // Linearizing effect: Coordinated push in one direction
+          // "Significant increase in peak velocity" - 2025 Paper
+          p.force.x += CILIA_FORCE; 
+      } else {
+          // New Peristaltic Wave Motion (Replacing Rotation)
+          // Synchronized metachronal wave traveling along the body axis
+          // Phase depends on x-position relative to CoM
+          
+          const waveFreq = 3.0 + (memory * 2.0); // 3-5 Hz based on memory
+          const phase = (dx * 0.05) - (time * waveFreq * Math.PI * 2);
+          
+          // Asymmetric stroke for net propulsion
+          const beat = Math.sin(phase);
+          
+          let thrustX = 0;
+          let liftY = 0;
+          
+          if (beat > 0) {
+             // Power Stroke: Push forward (+X), Grip down (+Y)
+             thrustX = CILIA_FORCE * 1.5 * beat;
+             liftY = CILIA_FORCE * 0.2 * beat;
+          } else {
+             // Recovery Stroke: Reduce drag, Lift up (-Y)
+             // beat is negative here
+             thrustX = CILIA_FORCE * 0.3 * beat; // Negative X (drag)
+             liftY = CILIA_FORCE * 1.0 * beat;   // Negative Y (Up)
+          }
+          
+          // Plasticity Noise: Lower memory = less coordinated
+          if (memory < 0.8) {
+              const noiseScale = (0.8 - memory);
+              thrustX += (Math.random() - 0.5) * noiseScale * CILIA_FORCE;
+              liftY += (Math.random() - 0.5) * noiseScale * CILIA_FORCE;
+          }
+          
+          p.force.x += thrustX;
+          p.force.y += liftY;
+      }
+
+      // --- SELF-ASSEMBLY (Surface Tension) ---
+      // Pull towards Center of Mass to maintain spherical "Basal" shape
+      const dxSelf = bot.centerOfMass.x - p.pos.x;
+      const dySelf = bot.centerOfMass.y - p.pos.y;
+      p.force.x += dxSelf * SURFACE_TENSION;
+      p.force.y += dySelf * SURFACE_TENSION;
 
       p.charge *= decay;
     }
 
+    // Spring Physics (Muscles & Structure)
     for (let i = 0; i < sCount; i++) {
       const s = springs[i];
       const p1 = particles[s.p1];
@@ -263,7 +350,11 @@ export class PhysicsEngine {
       const dist = Math.sqrt(distSq);
 
       let targetLen = s.currentRestLength;
+      
       if (s.isMuscle) {
+        // Metabolic Cost of Movement
+        bot.energy -= METABOLIC_DECAY * 0.1;
+
         const avgCharge = (p1.charge + p2.charge) * 0.5;
         const freqMod = 1.0 + avgCharge * 4.0; 
         const contraction = Math.sin(time * mSpeed * freqMod + (s.phaseOffset || 0));
@@ -301,12 +392,14 @@ export class PhysicsEngine {
     
     bot.totalCharge = activeCharge;
 
+    // Integration & Friction
     let cx = 0, cy = 0;
     
     const chargeDrag = 1.0 - (chargeDensity * 0.15);
     const individualFactor = 1.0 + (memory * 0.005);
     const baseFriction = fluidBaseFriction * individualFactor * chargeDrag;
-    const smoothing = Math.max(0.01, Math.min(1.0, syncRate));
+    
+    // We removed smoothing logic from here as it is now handled in smoothRenderPositions()
 
     for (let i = 0; i < pCount; i++) {
       const p = particles[i];
@@ -336,9 +429,6 @@ export class PhysicsEngine {
           p.oldPos.y = p.pos.y;
       }
 
-      p.renderPos.x = this.lerp(p.renderPos.x, p.pos.x, smoothing);
-      p.renderPos.y = this.lerp(p.renderPos.y, p.pos.y, smoothing);
-
       cx += p.pos.x;
       cy += p.pos.y;
     }
@@ -350,6 +440,8 @@ export class PhysicsEngine {
   }
 
   evaluateFitness(bot: Xenobot): number {
+    // Paper: Distance traveled is key metric, but survival (energy) matters
+    if (bot.isDead) return 0;
     const dist = bot.centerOfMass.x - bot.startPosition.x;
     return dist < 0 ? 0 : dist; 
   }

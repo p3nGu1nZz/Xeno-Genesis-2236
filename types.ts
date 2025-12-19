@@ -1,3 +1,4 @@
+
 export enum CellType {
   EMPTY = 0,
   SKIN = 1,  
@@ -57,11 +58,13 @@ export interface Xenobot {
   isDead: boolean;
   totalCharge: number; 
   groupId: number; // 0 for Group A, 1 for Group B
+  energy: number; // Metabolic reserve (Yolk platelets)
+  age: number;
 }
 
 export interface SimulationConfig {
-  populationSize: number; // Initial / Current Size
-  maxPopulationSize: number; // Cap
+  populationSize: number; 
+  maxPopulationSize: number; 
   gravity: number;
   friction: number;
   muscleStrength: number;
@@ -72,6 +75,7 @@ export interface SimulationConfig {
   plasticity: number; 
   syncRate: number; 
   generationDuration: number; 
+  acousticFreq: number; // 0 = Off, 300 = Linearizing Stimulus
 }
 
 export interface AnalysisResult {

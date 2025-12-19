@@ -1,9 +1,9 @@
 import { SimulationConfig } from './types';
 
-export const INITIAL_POPULATION_SIZE = 10; // Start with 5 bots per group
-export const MAX_POPULATION_CAP = 100; // Default limit
+export const INITIAL_POPULATION_SIZE = 10; // Explicitly 5 bots per group (2 groups)
+export const MAX_POPULATION_CAP = 500; // Updated to 500 per user request
 export const GRID_SIZE = 6; 
-export const GENERATION_TIME = 600; 
+export const GENERATION_TIME = 1000; // Updated to 1000 ticks per user request
 
 export const DEFAULT_CONFIG: SimulationConfig = {
   populationSize: INITIAL_POPULATION_SIZE,
@@ -13,10 +13,10 @@ export const DEFAULT_CONFIG: SimulationConfig = {
   muscleStrength: 0.25, 
   muscleSpeed: 0.1, 
   groundHeight: 1200, 
-  gridScale: 50, 
+  gridScale: 48, // Updated to 48px per user request
   bioelectricDecay: 0.96,
   plasticity: 0.002, 
-  syncRate: 0.2, // Default smoothing factor
+  syncRate: 0.2, 
   generationDuration: GENERATION_TIME,
 };
 
@@ -30,5 +30,4 @@ export const COLORS = {
 };
 
 export const TIMESTEP = 1;
-// Optimized: Reduced from 8 to 6 for better performance while maintaining stability
 export const CONSTRAINT_ITERATIONS = 6;

@@ -1,7 +1,7 @@
 import { PhysicsEngine } from './services/physicsEngine';
 import { createRandomGenome, evolvePopulation } from './services/geneticAlgorithm';
 import { SimulationConfig, Xenobot, Genome, WorkerMessage } from './types';
-import { DEFAULT_CONFIG } from './constants';
+import { DEFAULT_CONFIG, INITIAL_POPULATION_SIZE } from './constants';
 
 // Internal State
 let engine: PhysicsEngine | null = null;
@@ -48,17 +48,40 @@ const initSimulation = (config: SimulationConfig, startPop?: Genome[], startGen?
       }
   } else {
       generation = 1;
-      population = Array(config.populationSize).fill(null).map(() => createRandomGenome(1));
+      
+      // Initialize with split groups. Respect the config.populationSize!
+      const totalSize = Math.max(2, config.populationSize);
+      const sizeA = Math.floor(totalSize / 2);
+      const sizeB = totalSize - sizeA;
+      
+      const groupA = Array(sizeA).fill(null).map(() => createRandomGenome(generation, 190)); 
+      const groupB = Array(sizeB).fill(null).map(() => createRandomGenome(generation, 340)); 
+      
+      population = [...groupA, ...groupB];
   }
 
   // Init Bots
   engine.bots = [];
   population.forEach(g => {
-    const bot = engine!.createBot(g, 100, 200);
+    let startX = 0;
+    
+    if (typeof g.originX === 'number' && !isNaN(g.originX)) {
+         startX = g.originX + (Math.random() - 0.5) * 50; 
+    } else {
+       const match = g.color.match(/hsl\((\d+\.?\d*)/);
+       const hue = match ? parseFloat(match[1]) : 0;
+       const isGroupA = (hue > 150 && hue < 230);
+       
+       startX = isGroupA ? 0 : 1200; 
+       startX += (Math.random() - 0.5) * 150; 
+       g.originX = startX;
+    }
+
+    const bot = engine!.createBot(g, startX, 200 + Math.random() * 100);
     engine!.bots.push(bot);
   });
   
-  timeLeft = config.generationDuration || 600;
+  timeLeft = config.generationDuration || 1000;
   bestGenome = null;
 };
 
@@ -69,8 +92,14 @@ const evolve = () => {
   const currentBots = engine.bots;
   const evaluatedGenomes = population.map(genome => {
     const bot = currentBots.find(b => b.genome.id === genome.id);
-    const fitness = bot ? engine!.evaluateFitness(bot) : 0;
-    return { ...genome, fitness };
+    let fitness = 0;
+    let originX = genome.originX || 0;
+    
+    if (bot) {
+        fitness = engine!.evaluateFitness(bot);
+        originX = bot.centerOfMass.x;
+    }
+    return { ...genome, fitness, originX };
   });
 
   // 2. Sort & Pick Best
@@ -85,25 +114,25 @@ const evolve = () => {
   // 4. Rebuild Physics World
   engine.bots = [];
   nextGen.forEach(g => {
-    const bot = engine!.createBot(g, 100, 200);
+    let startX = g.originX || 0;
+    startX += (Math.random() - 0.5) * 50;
+
+    const bot = engine!.createBot(g, startX, 200 + Math.random() * 100);
     engine!.bots.push(bot);
   });
   
   // 5. Reset Timer
-  timeLeft = engine.config.generationDuration || 600;
+  timeLeft = engine.config.generationDuration || 1000;
 };
 
 const loop = () => {
   if (!isRunning || !engine) return;
 
-  // We run a fixed timestep for consistency, but we calculate delta for smooth wall-clock mapping if needed.
-  // Currently PhysicsEngine.update uses a fixed constant TIMESTEP, so we just call it once per tick.
   const now = performance.now();
   // const dt = (now - lastTime) / 1000;
   lastTime = now;
 
   // Update Physics
-  // We can perform multiple sub-steps here if we want faster simulation
   engine.update(now / 1000);
 
   // Update Best Genome Tracking
@@ -138,7 +167,7 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
       isRunning = true;
       lastTime = performance.now();
       if (!timerId) {
-          timerId = setInterval(loop, 16); // ~60 FPS Target
+          timerId = setInterval(loop, 16); 
       }
       break;
 
@@ -152,9 +181,6 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
 
     case 'UPDATE_SETTINGS':
       if (engine) {
-          // If critical physics params change, we might need full re-init, 
-          // but for things like gravity/friction we can just update config.
-          // For simplicity, we re-init if grid/pop changes, or update inplace otherwise.
           const oldConfig = engine.config;
           const newConfig = payload as SimulationConfig;
           
@@ -164,7 +190,6 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
           } else {
               engine.config = newConfig;
               engine.groundY = newConfig.groundHeight;
-              // Update duration if changed
               if (timeLeft > newConfig.generationDuration) {
                   timeLeft = newConfig.generationDuration;
               }

@@ -8,7 +8,7 @@ import { TitleScreen } from './components/TitleScreen';
 import { SettingsPanel } from './components/SettingsPanel';
 import { HelpModal } from './components/HelpModal';
 import { Xenobot, Genome, AnalysisResult, CameraState, SimulationConfig, SaveData } from './types';
-import { DEFAULT_CONFIG } from './constants';
+import { DEFAULT_CONFIG, INITIAL_POPULATION_SIZE } from './constants';
 import { ScanEye } from 'lucide-react';
 import { PhysicsEngine } from './services/physicsEngine';
 import { createRandomGenome, evolvePopulation } from './services/geneticAlgorithm';
@@ -23,12 +23,12 @@ const App: React.FC = () => {
   // Simulation State
   const [generation, setGeneration] = useState(1);
   const [isRunning, setIsRunning] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(config.generationDuration || 600);
+  const [timeLeft, setTimeLeft] = useState(config.generationDuration || 1000);
   
   // Simulation Engine State (Main Thread)
   const engineRef = useRef<PhysicsEngine | null>(null);
   const populationRef = useRef<Genome[]>([]);
-  const timeLeftRef = useRef<number>(config.generationDuration || 600);
+  const timeLeftRef = useRef<number>(config.generationDuration || 1000);
   
   // We use a Ref for bots to pass to Canvas to avoid re-renders
   const botsRef = useRef<Xenobot[]>([]); 
@@ -61,9 +61,11 @@ const App: React.FC = () => {
 
     // Population Initialization Strategy
     if (!pop || pop.length === 0) {
-        // Create 2 Distinct Groups for interaction, starts SMALL (e.g. 10 each)
-        const sizeA = Math.floor(cfg.populationSize / 2);
-        const sizeB = cfg.populationSize - sizeA;
+        // Use the passed configuration for population size. 
+        // Default is 10 (5 per group), but if user changed slider, it respects that.
+        const totalSize = Math.max(2, cfg.populationSize);
+        const sizeA = Math.floor(totalSize / 2);
+        const sizeB = totalSize - sizeA;
         
         // Group A: "Natives" (Cyan/Blue range ~190)
         const groupA = Array(sizeA).fill(null).map(() => createRandomGenome(currentGen, 190)); 
@@ -78,16 +80,14 @@ const App: React.FC = () => {
     setGeneration(currentGen);
 
     // Create Bots with Position Logic
-    engine.bots = pop.map((g, i) => {
+    engine.bots = pop.map((g) => {
         let startX = 0;
         
         // Priority 1: Inherited Position (Evolutionary Continuity)
-        // Check strict number type to avoid NaN issues
         if (typeof g.originX === 'number' && !isNaN(g.originX)) {
              startX = g.originX + (Math.random() - 0.5) * 50; 
         } 
         // Priority 2: Gen 1 Split (Initial Setup)
-        // If this is the very first setup or a reset, enforce the split
         else {
            // Fallback / First Gen
            const match = g.color.match(/hsl\((\d+\.?\d*)/);
@@ -95,7 +95,11 @@ const App: React.FC = () => {
            const isGroupA = (hue > 150 && hue < 230);
            
            startX = isGroupA ? 0 : 1200; 
-           startX += (Math.random() - 0.5) * 300; // Spread out more for initial spawn
+           // Reduced spread (150) so the 5 bots appear as a tight group
+           startX += (Math.random() - 0.5) * 150; 
+           
+           // IMPORTANT: Save this start position back to the genome so it persists if they don't move
+           g.originX = startX;
         }
 
         const startY = 200 + Math.random() * 100; 
@@ -105,7 +109,7 @@ const App: React.FC = () => {
     engineRef.current = engine;
     botsRef.current = engine.bots;
     
-    timeLeftRef.current = cfg.generationDuration || 600;
+    timeLeftRef.current = cfg.generationDuration || 1000;
     setTimeLeft(timeLeftRef.current);
     setBestGenomeA(null);
     setBestGenomeB(null);
@@ -114,17 +118,18 @@ const App: React.FC = () => {
   const evolve = useCallback(() => {
       if (!engineRef.current) return;
 
-      // 1. Evaluate & Capture Position
       const currentBots = engineRef.current.bots;
+      
+      // 1. Evaluate Fitness & Capture Final Positions
       const evaluatedGenomes = populationRef.current.map(genome => {
         const bot = currentBots.find(b => b.genome.id === genome.id);
-        const fitness = bot ? engineRef.current!.evaluateFitness(bot) : 0;
+        let fitness = 0;
+        let originX = genome.originX || 0;
         
-        // Capture final position to store in genome for next gen placement
-        // Robust check: Use bot position if available, otherwise keep existing originX.
-        let originX = genome.originX; 
         if (bot) {
-            originX = bot.centerOfMass.x;
+            fitness = engineRef.current!.evaluateFitness(bot);
+            // CRITICAL: Capture the final position (Center of Mass) for the next generation
+            originX = bot.centerOfMass.x; 
         }
         
         return { ...genome, fitness, originX };
@@ -146,32 +151,20 @@ const App: React.FC = () => {
       setBestGenomeA(bestCyan);
       setBestGenomeB(bestMagenta);
 
-      // 3. Evolve with Speciation and Growth
+      // 3. Evolve with Speciation (Positions are inherited inside evolvePopulation via crossover)
       const nextGen = evolvePopulation(evaluatedGenomes, generation, config.maxPopulationSize);
       populationRef.current = nextGen;
-      
-      // Update config size to match current growth so slider UI updates if we wanted bidirectional sync, 
-      // but here we just update the internal simulation population count.
       
       const nextGenNum = generation + 1;
       setGeneration(nextGenNum);
 
       // 4. Rebuild Physics World
-      engineRef.current.bots = nextGen.map((g, i) => {
-          let startX = 0;
+      // The new genomes in nextGen already have 'originX' set from their parents
+      engineRef.current.bots = nextGen.map((g) => {
+          let startX = g.originX || 0;
           
-          if (typeof g.originX === 'number' && !isNaN(g.originX)) {
-             // Continue from where parent left off
-             startX = g.originX + (Math.random() - 0.5) * 50; 
-          } else {
-             // Fallback for new mutations/children who inherited originX from parent in crossover
-             // But if crossover didn't set it (edge case), guess via color
-             const match = g.color.match(/hsl\((\d+\.?\d*)/);
-             const h = match ? parseFloat(match[1]) : 0;
-             const isCyan = (h > 150 && h < 230);
-             startX = isCyan ? 0 : 1200;
-             startX += (Math.random() - 0.5) * 300;
-          }
+          // Add slight scatter so clones don't stack perfectly
+          startX += (Math.random() - 0.5) * 50;
 
           const startY = 200 + Math.random() * 100;
           return engineRef.current!.createBot(g, startX, startY);
@@ -179,7 +172,7 @@ const App: React.FC = () => {
       botsRef.current = engineRef.current.bots;
 
       // 5. Reset Timer
-      timeLeftRef.current = config.generationDuration || 600;
+      timeLeftRef.current = config.generationDuration || 1000;
       setTimeLeft(timeLeftRef.current);
   }, [config, generation]);
 
@@ -264,7 +257,8 @@ const App: React.FC = () => {
 
   const startNewSimulation = () => {
     setAppState('SIMULATION');
-    initSimulation(config);
+    // Ensure we start fresh
+    initSimulation(config, [], 1);
     setCamera(getCenteredCamera(window.innerWidth, window.innerHeight, 0.55));
     setShowHelp(true); 
     setIsRunning(true);
@@ -272,7 +266,8 @@ const App: React.FC = () => {
 
   const handleApplySettings = (newConfig: SimulationConfig) => {
     setConfig(newConfig);
-    initSimulation(newConfig);
+    // When settings change, we usually restart the sim to apply them cleanly
+    initSimulation(newConfig, [], 1);
     setShowSettings(false);
     setIsRunning(true);
   };
@@ -397,7 +392,7 @@ const App: React.FC = () => {
                 <div>PHYSICS_ENGINE: MAIN_THREAD_OPTIMIZED</div>
                 <div>GRAVITY: {config.gravity.toFixed(2)} m/s²</div>
                 <div>POPULATION: {populationRef.current.length} / {config.maxPopulationSize}</div>
-                <div>TRAINING_DURATION: {config.generationDuration || 600}</div>
+                <div>TRAINING_DURATION: {config.generationDuration || 1000}</div>
             </div>
             
              <div className="flex gap-2 pointer-events-auto">

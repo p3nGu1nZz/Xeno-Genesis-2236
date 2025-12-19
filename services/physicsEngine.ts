@@ -19,8 +19,6 @@ export class PhysicsEngine {
     const { genes, gridSize } = genome;
     const scale = this.config.gridScale;
 
-    // Use a flat array for particle indices map to avoid array-of-arrays allocation if possible,
-    // but here mapped by y/x is fine for init.
     const particleMap: number[][] = Array(gridSize).fill(null).map(() => Array(gridSize).fill(-1));
 
     for (let y = 0; y < gridSize; y++) {
@@ -41,7 +39,6 @@ export class PhysicsEngine {
       }
     }
 
-    // Neighbors definition (static)
     const neighbors = [
       { dx: 1, dy: 0, dist: 1 },       
       { dx: 0, dy: 1, dist: 1 },       
@@ -67,10 +64,6 @@ export class PhysicsEngine {
                 
                 const isMuscle = (type1 === CellType.HEART || type2 === CellType.HEART);
                 const isNeuron = (type1 === CellType.NEURON || type2 === CellType.NEURON);
-                
-                // ADJUSTED STIFFNESS:
-                // Neurons (0.8) act as semi-rigid struts.
-                // Skin/Muscle (0.3) are softer for organic movement.
                 const stiffness = isNeuron ? 0.8 : 0.3;
 
                 springs.push({
@@ -88,7 +81,6 @@ export class PhysicsEngine {
       }
     }
 
-    // Determine Group ID based on Hue
     const match = genome.color.match(/hsl\((\d+\.?\d*)/);
     const hue = match ? parseFloat(match[1]) : 0;
     const isGroupA = (hue > 150 && hue < 230); // Cyan/Blue
@@ -112,7 +104,6 @@ export class PhysicsEngine {
     const dtSq = dt * dt;
     const botCount = this.bots.length;
 
-    // Optimization: Calculate collective info in a simple loop
     let totalMemory = 0;
     let livingCount = 0;
     
@@ -126,13 +117,11 @@ export class PhysicsEngine {
     
     const avgMemory = livingCount > 0 ? totalMemory / livingCount : 0.5;
     const collectiveFriction = this.config.friction + (avgMemory - 0.5) * 0.08;
-    // Clamp
     const fluidBaseFriction = collectiveFriction < 0.85 ? 0.85 : (collectiveFriction > 0.995 ? 0.995 : collectiveFriction);
     
-    // 1. Group Repulsion Logic (Avoidance)
-    // Only run if we have enough bots to matter, and limit complexity
+    // Apply Social Forces (Repulsion & Organization)
     if (botCount > 1) {
-        this.applyGroupRepulsion(botCount);
+        this.applySocialForces(botCount);
     }
 
     for (let i = 0; i < botCount; i++) {
@@ -142,11 +131,13 @@ export class PhysicsEngine {
     }
   }
 
-  // Logic to make groups avoid each other
-  private applyGroupRepulsion(botCount: number) {
-      // Repulsion radius
-      const RADIUS = 200; 
-      const FORCE_STRENGTH = 0.5; 
+  // Improved Social Forces: Repels enemies strongly, organizes allies gently
+  private applySocialForces(botCount: number) {
+      const GROUP_REPULSION_RADIUS = 300; 
+      const GROUP_FORCE = 0.8; 
+      
+      const SELF_REPULSION_RADIUS = 80; // "Personal space" for organization
+      const SELF_FORCE = 0.1;
 
       for (let i = 0; i < botCount; i++) {
           const b1 = this.bots[i];
@@ -156,38 +147,56 @@ export class PhysicsEngine {
               const b2 = this.bots[j];
               if (b2.isDead) continue;
 
-              // Only repel if different groups
+              const dx = b1.centerOfMass.x - b2.centerOfMass.x;
+              const dy = b1.centerOfMass.y - b2.centerOfMass.y;
+              const distSq = dx*dx + dy*dy;
+
+              if (distSq < 0.1) continue; 
+
+              // Scenario 1: Different Group -> Strong Avoidance
               if (b1.groupId !== b2.groupId) {
-                  const dx = b1.centerOfMass.x - b2.centerOfMass.x;
-                  const dy = b1.centerOfMass.y - b2.centerOfMass.y;
-                  const distSq = dx*dx + dy*dy;
-
-                  if (distSq < RADIUS * RADIUS && distSq > 0.1) {
+                  if (distSq < GROUP_REPULSION_RADIUS * GROUP_REPULSION_RADIUS) {
                       const dist = Math.sqrt(distSq);
-                      const overlap = RADIUS - dist;
+                      const overlap = GROUP_REPULSION_RADIUS - dist;
+                      const f = (overlap / GROUP_REPULSION_RADIUS) * GROUP_FORCE;
                       
-                      // Calculate repulsion vector
-                      const fx = (dx / dist) * overlap * FORCE_STRENGTH;
-                      const fy = (dy / dist) * overlap * FORCE_STRENGTH;
+                      const fx = (dx / dist) * f;
+                      const fy = (dy / dist) * f;
 
-                      // Apply to all particles in b1
-                      for(const p of b1.particles) {
-                          p.force.x += fx / b1.particles.length;
-                          p.force.y += fy / b1.particles.length;
-                      }
-                      
-                      // Apply inverse to all particles in b2
-                      for(const p of b2.particles) {
-                          p.force.x -= fx / b2.particles.length;
-                          p.force.y -= fy / b2.particles.length;
-                      }
+                      this.applyForceToBot(b1, fx, fy);
+                      this.applyForceToBot(b2, -fx, -fy);
                   }
+              } 
+              // Scenario 2: Same Group -> Mild Organization (Prevent Stacking)
+              else {
+                   if (distSq < SELF_REPULSION_RADIUS * SELF_REPULSION_RADIUS) {
+                      const dist = Math.sqrt(distSq);
+                      const overlap = SELF_REPULSION_RADIUS - dist;
+                      const f = (overlap / SELF_REPULSION_RADIUS) * SELF_FORCE;
+                      
+                      const fx = (dx / dist) * f;
+                      const fy = (dy / dist) * f;
+                      
+                      this.applyForceToBot(b1, fx, fy);
+                      this.applyForceToBot(b2, -fx, -fy);
+                   }
               }
           }
       }
   }
 
-  // Linear interpolation helper for smoothing
+  private applyForceToBot(bot: Xenobot, fx: number, fy: number) {
+      const count = bot.particles.length;
+      if (count === 0) return;
+      // Distribute force across particles so the bot moves as a unit
+      const pFx = fx / count;
+      const pFy = fy / count;
+      for (const p of bot.particles) {
+          p.force.x += pFx;
+          p.force.y += pFy;
+      }
+  }
+
   private lerp(start: number, end: number, t: number): number {
     return start * (1 - t) + end * t;
   }
@@ -208,36 +217,30 @@ export class PhysicsEngine {
     const pCount = particles.length;
     const sCount = springs.length;
 
-    // Pre-calc common factors
     const chargeDensity = bot.totalCharge / (pCount || 1);
     const liftFromCharge = chargeDensity * 0.3;
     const baseBuoyancyFactor = 0.85 + liftFromCharge;
     const currentStrength = 0.08;
     const invGroundY = 1.0 / groundY;
 
-    // 1. Particles: Forces
     for (let i = 0; i < pCount; i++) {
       const p = particles[i];
       p.force.x = 0;
       p.force.y = gravity; 
 
-      // Optimized depth
       let depthRatio = p.pos.y * invGroundY;
       if (depthRatio < 0) depthRatio = 0;
       else if (depthRatio > 1) depthRatio = 1;
 
-      // Buoyancy
       const buoyancy = gravity * (baseBuoyancyFactor + depthRatio * 0.1); 
       p.force.y -= buoyancy;
 
-      // Current
       const currentFlow = Math.sin(time * 0.5 + depthRatio * 4.0) * currentStrength;
       p.force.x += currentFlow;
 
       p.charge *= decay;
     }
 
-    // 2. Springs
     for (let i = 0; i < sCount; i++) {
       const s = springs[i];
       const p1 = particles[s.p1];
@@ -253,7 +256,6 @@ export class PhysicsEngine {
 
       let targetLen = s.currentRestLength;
       if (s.isMuscle) {
-        // avgCharge inlined
         const avgCharge = (p1.charge + p2.charge) * 0.5;
         const freqMod = 1.0 + avgCharge * 4.0; 
         const contraction = Math.sin(time * mSpeed * freqMod + (s.phaseOffset || 0));
@@ -263,7 +265,6 @@ export class PhysicsEngine {
       const diff = (dist - targetLen) / dist;
       const forceVal = s.stiffness * diff;
 
-      // Bioelectric generation
       const stress = diff < 0 ? -diff : diff; 
       const chargeGen = stress * 0.6;
       
@@ -273,14 +274,10 @@ export class PhysicsEngine {
       }
       activeCharge += (p1.charge + p2.charge);
 
-      // Adaptation
       if (stress > 0.15) {
           s.currentRestLength += (dist - s.currentRestLength) * (plasticity * (0.2 + memory));
       } else {
-          // Forgetting / Decay of Adaptation
-          // Increased rate for "forgetting" unsupported adaptations.
-          // High memory -> slower forgetting (better retention).
-          const retention = memory * 0.8; // 0.0 to 0.8
+          const retention = memory * 0.8;
           const forgettingRate = 0.003 + (1.0 - retention) * 0.005; 
           s.currentRestLength += (s.restLength - s.currentRestLength) * forgettingRate;
       }
@@ -296,20 +293,16 @@ export class PhysicsEngine {
     
     bot.totalCharge = activeCharge;
 
-    // 3. Integration & Collision & Visual Smoothing
     let cx = 0, cy = 0;
     
     const chargeDrag = 1.0 - (chargeDensity * 0.15);
     const individualFactor = 1.0 + (memory * 0.005);
     const baseFriction = fluidBaseFriction * individualFactor * chargeDrag;
-    
-    // Clamp sync rate to prevent instability (0 < syncRate <= 1)
     const smoothing = Math.max(0.01, Math.min(1.0, syncRate));
 
     for (let i = 0; i < pCount; i++) {
       const p = particles[i];
       
-      // Depth Viscosity
       let depthVal = p.pos.y * invGroundY;
       if (depthVal < 0) depthVal = 0;
       const depthViscosity = 1.0 - (depthVal * 0.03);
@@ -325,21 +318,16 @@ export class PhysicsEngine {
       p.pos.x += vx + p.force.x * dtSq;
       p.pos.y += vy + p.force.y * dtSq;
 
-      // Simple floor constraint here
-      
-      // Bottom Constraint
       if (p.pos.y > groundY) {
         p.pos.y = groundY;
         const vy_impact = (p.pos.y - p.oldPos.y);
         p.oldPos.y = p.pos.y + vy_impact * 0.6; 
       }
-      // Top Constraint
       if (p.pos.y < -2000) {
           p.pos.y = -2000;
           p.oldPos.y = p.pos.y;
       }
 
-      // Visual Smoothing: Apply lerp
       p.renderPos.x = this.lerp(p.renderPos.x, p.pos.x, smoothing);
       p.renderPos.y = this.lerp(p.renderPos.y, p.pos.y, smoothing);
 

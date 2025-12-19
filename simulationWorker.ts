@@ -103,6 +103,10 @@ const evolveContinuous = () => {
             return;
         }
 
+        // --- PROBABILISTIC REPRODUCTION ---
+        // 0.1% chance per check (running every 1 second)
+        if (Math.random() > 0.001) return;
+
         groupBots.sort((a, b) => b.centerOfMass.x - a.centerOfMass.x);
         
         const needGrowth = groupBots.length < targetGroupSize;
@@ -119,6 +123,7 @@ const evolveContinuous = () => {
         const nextGenParams = evolvePopulation(parents, generation, 10);
         const childGenome = nextGenParams[nextGenParams.length - 1];
         
+        // Preserve positions by spawning child near parent and leaving everyone else alone
         const spawnX = parent1.centerOfMass.x - 50 - Math.random() * 50; 
         const spawnY = parent1.centerOfMass.y + (Math.random() - 0.5) * 50;
         

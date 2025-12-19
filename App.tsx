@@ -13,14 +13,6 @@ import { ScanEye } from 'lucide-react';
 import { PhysicsEngine } from './services/physicsEngine';
 import { createRandomGenome, evolvePopulation } from './services/geneticAlgorithm';
 
-// Helper for continuous evolution
-// We need access to crossover/mutate from GA but evolvePopulation handles array
-// We will replicate single-step evolution here or refactor. 
-// For simplicity, we'll re-implement the single step using existing helpers if exported, 
-// but since 'crossover' and 'mutate' are not exported, we will rely on a custom logic here 
-// or assume we can just use evolvePopulation on a micro-scale.
-// Actually, evolvePopulation does tournament selection, so we can pass a small pool.
-
 const App: React.FC = () => {
   // Application State
   const [appState, setAppState] = useState<'TITLE' | 'SIMULATION'>('TITLE');
@@ -31,7 +23,6 @@ const App: React.FC = () => {
   // Simulation State
   const [generation, setGeneration] = useState(1);
   const [isRunning, setIsRunning] = useState(false);
-  // TimeLeft is removed in favor of continuous flow
   
   // Simulation Engine State (Main Thread)
   const engineRef = useRef<PhysicsEngine | null>(null);
@@ -119,7 +110,6 @@ const App: React.FC = () => {
     if (!engineRef.current) return;
     const engine = engineRef.current;
     
-    // We process each group independently to maintain diversity and group counts
     const groups = [0, 1];
     let evolutionOccurred = false;
 
@@ -130,7 +120,7 @@ const App: React.FC = () => {
         const targetGroupSize = Math.floor(config.populationSize / 2);
         
         if (groupBots.length === 0) {
-            // Extinction event? Reseed.
+            // Extinction event? Reseed immediately (No probability check)
             const newG = createRandomGenome(generation, groupId === 0 ? 190 : 340);
             const parentPos = groupId === 0 ? 0 : 1200;
             const bot = engine.createBot(newG, parentPos, 200);
@@ -138,12 +128,14 @@ const App: React.FC = () => {
             return;
         }
 
+        // --- PROBABILISTIC REPRODUCTION (Steady State) ---
+        // 0.1% chance per check (running every 1 second)
+        // This makes the simulation extremely stable, with reproduction events happening 
+        // roughly every ~16 minutes on average, simulating a long lifecycle.
+        if (Math.random() > 0.001) return;
+
         // Sort by X position (Fitness)
         groupBots.sort((a, b) => b.centerOfMass.x - a.centerOfMass.x);
-        
-        // Strategy:
-        // 1. If population < target, Just Breed (Growth)
-        // 2. If population >= target, Kill Worst then Breed (Replacement)
         
         const needGrowth = groupBots.length < targetGroupSize;
         
@@ -154,27 +146,22 @@ const App: React.FC = () => {
         }
 
         // Breed: Pick top performers
-        // If we have at least 1 bot, we can clone/mutate. If 2, we crossover.
         const parent1 = groupBots[0];
         const parent2 = groupBots.length > 1 ? groupBots[1] : groupBots[0];
         
-        // Use evolvePopulation helper to generate a child
-        // We pass a mini-population of the best parents to generate 1 child
         const parents = [parent1.genome, parent2.genome];
+        const nextGenParams = evolvePopulation(parents, generation, 10); 
         
-        // We force generation of 1 child by asking for population size 3 from pool of 2
-        // evolvePopulation logic: returns array of genomes. 
-        // We'll just grab the new one.
-        const nextGenParams = evolvePopulation(parents, generation, 10); // 10 is arbitrary max here
-        
-        // The function returns parents + children. We want the last one (newest).
         const childGenome = nextGenParams[nextGenParams.length - 1];
         
-        // Position child near top parent
+        // --- PRESERVE POSITIONS ---
+        // We spawn the child near the parent. 
+        // CRITICAL: We DO NOT reset or move any other bots. 
+        // Existing bots keep their physics state exactly as is.
         const spawnX = parent1.centerOfMass.x - 50 - Math.random() * 50; // slightly behind leader
         const spawnY = parent1.centerOfMass.y + (Math.random() - 0.5) * 50;
         
-        childGenome.originX = spawnX; // Inherit spatial awareness
+        childGenome.originX = spawnX; 
 
         const childBot = engine.createBot(childGenome, spawnX, spawnY);
         engine.addBot(childBot);
@@ -404,7 +391,7 @@ const App: React.FC = () => {
                 <div>PHYSICS_ENGINE: MAIN_THREAD_OPTIMIZED</div>
                 <div>GRAVITY: {config.gravity.toFixed(2)} m/s²</div>
                 <div>POPULATION: {populationRef.current.length} / {config.maxPopulationSize}</div>
-                <div>MODE: STEADY_STATE_EVOLUTION</div>
+                <div>MODE: STEADY_STATE_EVOLUTION (0.1% PROB)</div>
             </div>
             
              <div className="flex gap-2 pointer-events-auto">

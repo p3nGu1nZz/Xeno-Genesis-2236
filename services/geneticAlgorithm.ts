@@ -172,9 +172,22 @@ export function evolvePopulation(population: Genome[], generation: number, maxPo
       
       const sorted = [...pool].sort((a, b) => b.fitness - a.fitness);
       
-      // Determine new size: Grow by 20% or fill to min of 4, up to max
-      let newSize = Math.ceil(pool.length * 1.2);
-      if (newSize < 4) newSize = 4; 
+      // Dynamic Reproduction Rate
+      // Base growth: 10% to 50% random variation per generation per group
+      const growthRate = 1.1 + Math.random() * 0.4;
+      
+      // Random Bonus Spawns (0-3) to allow small populations to jump
+      const rngBonus = Math.floor(Math.random() * 4);
+      
+      let newSize = Math.floor(pool.length * growthRate) + rngBonus;
+      
+      // Ensure strictly increasing if below cap (at least +1 if not full)
+      if (newSize <= pool.length && pool.length < currentMax) {
+          newSize = pool.length + 1;
+      }
+
+      // Cap limits
+      if (newSize < 4) newSize = 4; // Minimum viable population
       if (newSize > currentMax) newSize = currentMax;
       
       // Elitism: Keep top 2

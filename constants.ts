@@ -1,6 +1,6 @@
 import { SimulationConfig } from './types';
 
-export const INITIAL_POPULATION_SIZE = 20; // Start small
+export const INITIAL_POPULATION_SIZE = 10; // Start with 5 bots per group
 export const MAX_POPULATION_CAP = 100; // Default limit
 export const GRID_SIZE = 6; 
 export const GENERATION_TIME = 600; 

@@ -78,7 +78,9 @@ export class PhysicsEngine {
                 
                 const isMuscle = (type1 === CellType.HEART || type2 === CellType.HEART);
                 const isNeuron = (type1 === CellType.NEURON || type2 === CellType.NEURON);
-                const stiffness = isNeuron ? 0.8 : 0.3;
+                
+                // Reduced neuron stiffness slightly to prevent high-freq jitter
+                const stiffness = isNeuron ? 0.6 : 0.3;
 
                 // Propulsion Logic:
                 // We use a phase based on grid index to create a traveling wave.
@@ -158,11 +160,8 @@ export class PhysicsEngine {
   
   smoothRenderPositions() {
     // Tuned Smoothing Factor (Linear Interpolation)
-    // 0.25 provides a snappy but smooth visual response.
-    // Lower values (0.1) are smoother but "floaty/laggy".
-    // Higher values (0.5+) show more physics jitter.
     const smoothing = 0.25; 
-    const snapThreshold = 0.01; // Snap if very close to avoid micro-drifting
+    const snapThreshold = 0.01; 
     
     const botCount = this.bots.length;
     for (let i = 0; i < botCount; i++) {
@@ -393,7 +392,33 @@ export class PhysicsEngine {
       }
 
       const diff = (dist - targetLen) / dist;
+      
+      // Hooke's Law
       const forceVal = s.stiffness * diff;
+
+      // Spring Damping Calculation
+      // Project relative velocity onto the spring axis to damp internal oscillations
+      const vx1 = p1.pos.x - p1.oldPos.x;
+      const vy1 = p1.pos.y - p1.oldPos.y;
+      const vx2 = p2.pos.x - p2.oldPos.x;
+      const vy2 = p2.pos.y - p2.oldPos.y;
+
+      const dvx = vx2 - vx1;
+      const dvy = vy2 - vy1;
+
+      // Normalize distance vector
+      const nx = dx / dist;
+      const ny = dy / dist;
+
+      // Relative velocity along spring
+      const relVel = dvx * nx + dvy * ny;
+      
+      // Damping coefficient (drastically reduced from 0.5 to 0.05 to prevent explosion)
+      const damping = 0.05; 
+      const dampForce = relVel * damping;
+
+      // Total Spring Force = Hooke + Damping
+      const totalForce = forceVal + dampForce;
 
       const stress = diff < 0 ? -diff : diff; 
       const chargeGen = stress * 0.6;
@@ -412,8 +437,8 @@ export class PhysicsEngine {
           s.currentRestLength += (s.restLength - s.currentRestLength) * forgettingRate;
       }
 
-      const fx = dx * forceVal * 0.5;
-      const fy = dy * forceVal * 0.5;
+      const fx = nx * totalForce * 0.5;
+      const fy = ny * totalForce * 0.5;
 
       p1.force.x += fx;
       p1.force.y += fy;
@@ -431,6 +456,7 @@ export class PhysicsEngine {
     const baseFriction = fluidBaseFriction * individualFactor * chargeDrag;
     
     const WALL_BOUNCE = 0.3; // Amount of energy kept when hitting wall
+    const MAX_VELOCITY = 30; // Clamp velocity to prevent physics explosions
 
     for (let i = 0; i < pCount; i++) {
       const p = particles[i];
@@ -441,8 +467,12 @@ export class PhysicsEngine {
       
       const effectiveFriction = baseFriction * depthViscosity;
 
-      const vx = (p.pos.x - p.oldPos.x) * effectiveFriction;
-      const vy = (p.pos.y - p.oldPos.y) * effectiveFriction;
+      let vx = (p.pos.x - p.oldPos.x) * effectiveFriction;
+      let vy = (p.pos.y - p.oldPos.y) * effectiveFriction;
+
+      // Velocity Clamping to prevent artifacts
+      vx = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, vx));
+      vy = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, vy));
 
       p.oldPos.x = p.pos.x;
       p.oldPos.y = p.pos.y;

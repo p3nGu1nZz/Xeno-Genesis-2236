@@ -22,8 +22,8 @@ const App: React.FC = () => {
   const [config, setConfig] = useState<SimulationConfig>(DEFAULT_CONFIG);
   const [isSidebarCollapsed, setSidebarCollapsed] = useState(false);
   
-  // UI State for Panels
-  const [minimizedPanels, setMinimizedPanels] = useState({ A: false, B: false });
+  // UI State for Panels (Default Minimized)
+  const [minimizedPanels, setMinimizedPanels] = useState({ A: true, B: true });
 
   // Simulation State
   const [generation, setGeneration] = useState(1);
@@ -44,12 +44,16 @@ const App: React.FC = () => {
   const [bestGenomeA, setBestGenomeA] = useState<Genome | null>(null);
   const [bestGenomeB, setBestGenomeB] = useState<Genome | null>(null);
   
-  // Camera State
-  const [camera, setCamera] = useState<CameraState>({ x: 0, y: 0, zoom: 0.55 });
+  // Camera State (LookAt logic: x,y is center of screen in world space)
+  const [camera, setCamera] = useState<CameraState>({ x: WORLD_WIDTH / 2, y: 800, zoom: 0.55 });
   const keysPressed = useRef<Set<string>>(new Set());
   const lastInputTimeRef = useRef<number>(Date.now());
   const isAutoCameraRef = useRef<boolean>(true);
   
+  // Mouse Drag State
+  const isDraggingRef = useRef(false);
+  const dragStartRef = useRef({ x: 0, y: 0, camX: 0, camY: 0 });
+
   // Analysis State
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
@@ -97,7 +101,6 @@ const App: React.FC = () => {
           compressor.connect(ctx.destination);
 
           // 1. Deep Sub-Bass Drone (Binaural)
-          // Fundamental A1 (55Hz) + Detuned neighbor for slow beating
           const oscBass1 = ctx.createOscillator();
           oscBass1.type = 'sine';
           oscBass1.frequency.value = 55; 
@@ -109,7 +112,7 @@ const App: React.FC = () => {
 
           const oscBass2 = ctx.createOscillator();
           oscBass2.type = 'sine';
-          oscBass2.frequency.value = 55.2; // 0.2Hz beat frequency (Very slow)
+          oscBass2.frequency.value = 55.2; 
           const gBass2 = ctx.createGain();
           gBass2.gain.value = 0.3;
           oscBass2.connect(gBass2);
@@ -117,22 +120,20 @@ const App: React.FC = () => {
           oscBass2.start();
 
           // 2. Atmospheric Pad (Filtered)
-          // A2 (110Hz) Triangle wave for texture
           const oscPad = ctx.createOscillator();
           oscPad.type = 'triangle';
           oscPad.frequency.value = 110; 
           
           const filterPad = ctx.createBiquadFilter();
           filterPad.type = 'lowpass';
-          filterPad.frequency.value = 150; // Starts very closed
+          filterPad.frequency.value = 150; 
           filterPad.Q.value = 0.5;
 
-          // Subtle LFO modulation on Filter to simulate fluid movement
           const lfo = ctx.createOscillator();
           lfo.type = 'sine';
-          lfo.frequency.value = 0.08; // ~12s cycle
+          lfo.frequency.value = 0.08; 
           const lfoGain = ctx.createGain();
-          lfoGain.gain.value = 30; // +/- 30Hz modulation
+          lfoGain.gain.value = 30; 
           lfo.connect(lfoGain);
           lfoGain.connect(filterPad.frequency);
           lfo.start();
@@ -145,13 +146,12 @@ const App: React.FC = () => {
           gPad.connect(masterGain);
           oscPad.start();
 
-          // 3. High Harmonic "Shimmer" (Active State Indicator)
-          // E4 (329.63Hz) - Perfect Fifth harmonic 
+          // 3. High Harmonic "Shimmer"
           const oscShimmer = ctx.createOscillator();
           oscShimmer.type = 'sine';
           oscShimmer.frequency.value = 329.63; 
           const gShimmer = ctx.createGain();
-          gShimmer.gain.value = 0.0; // Start silent
+          gShimmer.gain.value = 0.0; 
           oscShimmer.connect(gShimmer);
           gShimmer.connect(masterGain);
           oscShimmer.start();
@@ -171,17 +171,13 @@ const App: React.FC = () => {
           const now = ctx.currentTime;
           
           if (isActive) {
-              // ACTIVE: Acoustic Stimulus (Linearizing)
-              // Open filter, increase volume, add upper harmonic
               nodes.gain.gain.setTargetAtTime(0.35, now, 1.0);
-              nodes.filter.frequency.setTargetAtTime(500, now, 1.5); // Open filter
-              nodes.shimmerGain.gain.setTargetAtTime(0.1, now, 2.0); // Fade in shimmer
+              nodes.filter.frequency.setTargetAtTime(500, now, 1.5); 
+              nodes.shimmerGain.gain.setTargetAtTime(0.1, now, 2.0); 
           } else {
-              // INACTIVE: Ambient Background
-              // Closed filter, deep bass focus
               nodes.gain.gain.setTargetAtTime(0.2, now, 3.0);
-              nodes.filter.frequency.setTargetAtTime(150, now, 3.0); // Close filter
-              nodes.shimmerGain.gain.setTargetAtTime(0.0, now, 1.0); // Fade out shimmer
+              nodes.filter.frequency.setTargetAtTime(150, now, 3.0); 
+              nodes.shimmerGain.gain.setTargetAtTime(0.0, now, 1.0); 
           }
       }
   }, []);
@@ -200,10 +196,7 @@ const App: React.FC = () => {
         const sizeA = Math.floor(totalSize / 2);
         const sizeB = totalSize - sizeA;
         
-        // Group A: "Natives" (Cyan/Blue range ~190)
         const groupA = Array(sizeA).fill(null).map(() => createRandomGenome(currentGen, 190)); 
-        
-        // Group B: "Invaders" (Magenta/Red range ~340)
         const groupB = Array(sizeB).fill(null).map(() => createRandomGenome(currentGen, 340)); 
         
         pop = [...groupA, ...groupB];
@@ -219,14 +212,11 @@ const App: React.FC = () => {
         let startX = 0;
         let startY = 0;
         const botRadius = 300; 
-        
-        // Cloud Parameters - Tighter Clusters for initial spawn
         const CLOUD_RADIUS = 350; 
         let validPosition = false;
         let attempts = 0;
 
         if (typeof g.originX === 'number' && !isNaN(g.originX)) {
-             // Offspring logic: Try to stay near parent
              while (!validPosition && attempts < 20) {
                  startX = g.originX + (Math.random() - 0.5) * 150;
                  startY = 600 + (Math.random() - 0.5) * 200;
@@ -242,15 +232,11 @@ const App: React.FC = () => {
              }
         } 
         else {
-           // New Spawn Logic
            const match = g.color.match(/hsl\((\d+\.?\d*)/);
            const hue = match ? parseFloat(match[1]) : 0;
            const isGroupA = (hue > 150 && hue < 230);
            
-           // Start with two groups clustered together, separated by a small distance.
-           // World Center approx 6000.
            const worldCenter = WORLD_WIDTH / 2;
-           // Tighter clustering: +/- 300 instead of 400
            const centerBase = isGroupA ? worldCenter - 300 : worldCenter + 300; 
            
            while (!validPosition && attempts < 50) {
@@ -260,7 +246,6 @@ const App: React.FC = () => {
                startX = centerBase + Math.cos(angle) * dist;
                startY = 800 + Math.sin(angle) * (dist * 0.7); 
 
-               // Check collision
                const collision = placedBots.some(p => {
                    const dx = p.x - startX;
                    const dy = p.y - startY;
@@ -304,7 +289,6 @@ const App: React.FC = () => {
         const targetGroupSize = Math.floor(config.populationSize / 2);
         
         if (groupBots.length === 0) {
-            // Extinction event? Reseed immediately
             const newG = createRandomGenome(generation, groupId === 0 ? 190 : 340);
             const parentPos = groupId === 0 ? WORLD_WIDTH/2 - 400 : WORLD_WIDTH/2 + 400;
             const bot = engine.createBot(newG, parentPos, 800);
@@ -312,17 +296,13 @@ const App: React.FC = () => {
             return;
         }
 
-        // --- PROBABILISTIC REPRODUCTION ---
-        // 0.1% chance per check (running every 1 second)
         if (Math.random() > 0.001) return;
 
-        // Sort by X position (Fitness)
         groupBots.sort((a, b) => b.centerOfMass.x - a.centerOfMass.x);
         
         const needGrowth = groupBots.length < targetGroupSize;
         
         if (!needGrowth) {
-             // Remove worst bot (last in sorted list)
              const victim = groupBots[groupBots.length - 1];
              engine.removeBot(victim.id);
         }
@@ -331,15 +311,14 @@ const App: React.FC = () => {
         
         const childGenome: Genome = {
             ...parent.genome,
+            genes: parent.genome.genes.map(row => [...row]), 
             id: Math.random().toString(36).substr(2, 9),
             generation: generation + 1,
-            bioelectricMemory: parent.genome.bioelectricMemory
+            bioelectricMemory: parent.genome.bioelectricMemory,
+            originX: parent.genome.originX
         };
         
-        childGenome.originX = parent.genome.originX;
-
-        // Spawn child in the cloud of the parent
-        const spawnX = parent.centerOfMass.x - 80 + (Math.random() - 0.5) * 40; 
+        const spawnX = parent.centerOfMass.x + (Math.random() - 0.5) * 80; 
         const spawnY = parent.centerOfMass.y + (Math.random() - 0.5) * 80;
         
         const childBot = engine.createBot(childGenome, spawnX, spawnY);
@@ -358,15 +337,12 @@ const App: React.FC = () => {
   const updateSimulation = useCallback(() => {
       if (!engineRef.current) return;
       
-      // Update Physics
       engineRef.current.update(performance.now() / 1000);
       botsRef.current = engineRef.current.bots;
 
-      // Continuous Evolution Timer
       evolutionTimerRef.current += 1;
       totalTickRef.current += 1;
       
-      // Update visual stats less frequently
       if (totalTickRef.current % 5 === 0) {
           setGlobalTick(totalTickRef.current);
       }
@@ -376,7 +352,6 @@ const App: React.FC = () => {
           evolutionTimerRef.current = 0;
       }
 
-      // Realtime Best Tracking (Every 10 ticks for UI efficiency)
       if (evolutionTimerRef.current % 10 === 0) { 
         let bestA: Genome | null = null;
         let maxFitA = -Infinity;
@@ -399,18 +374,15 @@ const App: React.FC = () => {
       }
   }, [evolveContinuous]);
 
-  // --- Helper to extract population for saving ---
   const getPopulationFromBots = (): Genome[] => {
       return populationRef.current;
   };
 
   const getCenteredCamera = (width: number, height: number, zoom: number = 0.55) => {
-    // Initial centering on the clustered groups
-    const targetX = WORLD_WIDTH / 2; 
-    const targetY = 800; 
+    // Center on world middle
     return {
-        x: width / 2 - targetX,
-        y: height / 2 - targetY,
+        x: WORLD_WIDTH / 2,
+        y: 800,
         zoom
     };
   };
@@ -428,6 +400,7 @@ const App: React.FC = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Keyboard Handling
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
         keysPressed.current.add(e.key.toLowerCase());
@@ -446,21 +419,49 @@ const App: React.FC = () => {
     };
   }, []);
 
+  // Mouse Drag Camera Handling
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button === 0) { // Left Click only
+        isDraggingRef.current = true;
+        isAutoCameraRef.current = false;
+        dragStartRef.current = {
+            x: e.clientX,
+            y: e.clientY,
+            camX: camera.x,
+            camY: camera.y
+        };
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (isDraggingRef.current) {
+        // Standard drag logic for LookAt camera
+        const dx = (e.clientX - dragStartRef.current.x) / camera.zoom;
+        const dy = (e.clientY - dragStartRef.current.y) / camera.zoom;
+        setCamera(prev => ({
+            ...prev,
+            x: dragStartRef.current.camX - dx, // Invert drag for natural feel
+            y: dragStartRef.current.camY - dy
+        }));
+    }
+  };
+
+  const handleMouseUp = () => {
+      isDraggingRef.current = false;
+  };
+
   const startNewSimulation = () => {
     setAppState('SIMULATION');
-    // Ensure we start fresh
     initSimulation(config, [], 1);
     setCamera(getCenteredCamera(window.innerWidth, window.innerHeight, 0.55));
     
-    // IMPORTANT: Start paused, wait for user to click Start in HelpModal
     setShowHelp(true); 
     setIsRunning(false); 
     
-    // Resume audio context if strictly suspended
     if (audioContextRef.current?.state === 'suspended') {
         audioContextRef.current.resume();
     }
-    updateAudio(false); // Start ambient drone
+    updateAudio(false); 
   };
 
   const handleStartSim = () => {
@@ -470,7 +471,6 @@ const App: React.FC = () => {
 
   const handleApplySettings = (newConfig: SimulationConfig) => {
     setConfig(newConfig);
-    // When settings change, we usually restart the sim to apply them cleanly
     initSimulation(newConfig, [], 1);
     setShowSettings(false);
     setIsRunning(true);
@@ -488,7 +488,6 @@ const App: React.FC = () => {
     setIsRunning(false);
     setAppState('TITLE');
     setShowSettings(false);
-    // Stop Audio
     if (audioContextRef.current) {
         audioContextRef.current.close();
         audioContextRef.current = null;
@@ -509,11 +508,11 @@ const App: React.FC = () => {
         for (let y = 0; y < size; y++) {
             for (let x = 0; x < size; x++) {
                 if (y === 0) {
-                    newGenes[y][x] = CellType.NEURON; // Anterior Sensory
+                    newGenes[y][x] = CellType.NEURON; 
                 } else if (y === size - 1) {
-                    newGenes[y][x] = CellType.HEART; // Posterior Motor
+                    newGenes[y][x] = CellType.HEART; 
                 } else {
-                    newGenes[y][x] = CellType.SKIN; // Structural Chassis
+                    newGenes[y][x] = CellType.SKIN; 
                 }
             }
         }
@@ -527,7 +526,7 @@ const App: React.FC = () => {
     });
 
     initSimulation(config, improvedPopulation, generation + 1);
-    setAnalysisResult(null); // Close panel
+    setAnalysisResult(null); 
   };
 
   // --- Main Animation Loop ---
@@ -535,13 +534,13 @@ const App: React.FC = () => {
   const updateCamera = () => {
       const now = Date.now();
       
-      // Auto-Resume Auto Camera after 10s of inactivity
-      if (!isAutoCameraRef.current && (now - lastInputTimeRef.current > 10000)) {
+      // Auto-Resume Auto Camera after 2s of inactivity (Reduced from 10s)
+      if (!isDraggingRef.current && !isAutoCameraRef.current && (now - lastInputTimeRef.current > 2000)) {
           isAutoCameraRef.current = true;
       }
 
       if (isAutoCameraRef.current && engineRef.current) {
-          // Follow Group A (Group 0) - Calculate Center of Mass
+          // Follow Group A (Group 0)
           let totalX = 0;
           let totalY = 0;
           let count = 0;
@@ -549,7 +548,6 @@ const App: React.FC = () => {
           const bots = engineRef.current.bots;
           for (let i = 0; i < bots.length; i++) {
               const b = bots[i];
-              // Only track living Group A bots for active following
               if (b.groupId === 0 && !b.isDead) {
                   totalX += b.centerOfMass.x;
                   totalY += b.centerOfMass.y;
@@ -561,20 +559,19 @@ const App: React.FC = () => {
               const avgX = totalX / count;
               const avgY = totalY / count;
               
-              // LEFT 40% RULE:
-              // We want avgX (World) to be positioned at roughly 40% of the screen width from the left.
-              // Canvas Logic: ScreenX = (WorldX - W/2 + CamX) * Zoom + W/2
+              // Target Screen Position: 40% Width (Left of Center)
+              // Standard LookAt Logic:
+              // ScreenX = (WorldX - CamX) * Zoom + W/2
               // TargetScreenX = 0.4 * W
-              // CamX = (TargetScreenX - W/2) / Zoom + W/2 - WorldX
+              // 0.4 * W = (AvgX - CamX) * Zoom + 0.5 * W
+              // -0.1 * W = (AvgX - CamX) * Zoom
+              // -0.1 * W / Zoom = AvgX - CamX
+              // CamX = AvgX + 0.1 * W / Zoom
               
-              const targetScreenX = dimensions.width * 0.4;
-              const targetScreenY = dimensions.height * 0.5; // Center Vertically
+              const targetCamX = avgX + (0.1 * dimensions.width) / camera.zoom;
+              const targetCamY = avgY; 
 
-              const targetCamX = (targetScreenX - dimensions.width / 2) / camera.zoom + dimensions.width / 2 - avgX;
-              const targetCamY = (targetScreenY - dimensions.height / 2) / camera.zoom + dimensions.height / 2 - avgY;
-
-              // Smooth Lerp (0.12 for faster but smooth tracking to prevent floating off screen)
-              const lerpFactor = 0.12;
+              const lerpFactor = 0.05;
               
               setCamera(prev => ({
                   x: prev.x + (targetCamX - prev.x) * lerpFactor,
@@ -583,31 +580,31 @@ const App: React.FC = () => {
               }));
           }
       } else {
-          // Manual Camera Logic
+          // Manual Camera Logic (Keys)
           setCamera(prev => {
-              if (isAutoCameraRef.current) return prev; 
+              if (isAutoCameraRef.current || isDraggingRef.current) return prev; 
               
-              const speed = 15 / prev.zoom;
+              const speed = 25 / prev.zoom; // Increased speed for responsiveness
               let dx = 0;
               let dy = 0;
               let dZoom = 0;
 
               // WASD + Arrow Keys
-              if (keysPressed.current.has('w') || keysPressed.current.has('arrowup')) dy += speed;
-              if (keysPressed.current.has('s') || keysPressed.current.has('arrowdown')) dy -= speed;
-              if (keysPressed.current.has('a') || keysPressed.current.has('arrowleft')) dx += speed;
-              if (keysPressed.current.has('d') || keysPressed.current.has('arrowright')) dx -= speed;
+              if (keysPressed.current.has('w') || keysPressed.current.has('arrowup')) dy -= speed; // Up decreases Y in world
+              if (keysPressed.current.has('s') || keysPressed.current.has('arrowdown')) dy += speed;
+              if (keysPressed.current.has('a') || keysPressed.current.has('arrowleft')) dx -= speed; // Left decreases X
+              if (keysPressed.current.has('d') || keysPressed.current.has('arrowright')) dx += speed;
               
               // Q/E + -/= for Zoom
-              if (keysPressed.current.has('q') || keysPressed.current.has('-')) dZoom -= 0.01;
-              if (keysPressed.current.has('e') || keysPressed.current.has('=')) dZoom += 0.01;
+              if (keysPressed.current.has('q') || keysPressed.current.has('-') || keysPressed.current.has('_')) dZoom -= 0.02;
+              if (keysPressed.current.has('e') || keysPressed.current.has('=') || keysPressed.current.has('+')) dZoom += 0.02;
 
               if (dx === 0 && dy === 0 && dZoom === 0) return prev;
 
               return {
                    x: prev.x + dx,
                    y: prev.y + dy,
-                   zoom: Math.max(0.1, Math.min(2.0, prev.zoom + dZoom))
+                   zoom: Math.max(0.1, Math.min(4.0, prev.zoom + dZoom))
               };
           });
       }
@@ -633,7 +630,13 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="relative w-full h-full bg-slate-950 overflow-hidden font-sans select-none text-white">
+    <div 
+        className="relative w-full h-full bg-slate-950 overflow-hidden font-sans select-none text-white"
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+    >
       {appState === 'TITLE' && <TitleScreen onStart={startNewSimulation} />}
       
       {appState === 'SIMULATION' && (
@@ -649,7 +652,7 @@ const App: React.FC = () => {
              {/* Top Right HUD Area */}
              <div className="absolute top-0 right-0 w-full p-4 pointer-events-none flex justify-end items-start z-20">
                 {/* Physics Stats */}
-                <div className={`absolute top-4 ${isSidebarCollapsed ? 'left-20' : 'left-80'} ml-6 transition-all duration-500 bg-slate-900/50 backdrop-blur border border-slate-700 p-2 rounded text-xs text-slate-400`}>
+                <div className={`absolute top-4 ${isSidebarCollapsed ? 'left-20' : 'left-80'} ml-6 transition-all duration-500 bg-slate-900/50 backdrop-blur border border-slate-700 p-2 rounded text-xs text-slate-400 select-none`}>
                     <div>PHYSICS_ENGINE: MAIN_THREAD_OPTIMIZED</div>
                     <div>GRAVITY: {config.gravity.toFixed(2)} m/s²</div>
                     <div>POPULATION: {populationRef.current.length} / {config.maxPopulationSize}</div>
@@ -662,7 +665,7 @@ const App: React.FC = () => {
                 <div className="flex gap-2 pointer-events-auto mt-2 mr-2">
                     <button 
                         onClick={resetCamera}
-                        className="bg-slate-800 hover:bg-slate-700 text-neon-cyan border border-slate-600 px-3 py-1 rounded text-xs flex items-center gap-2 transition-colors shadow-lg"
+                        className="bg-slate-800 hover:bg-slate-700 text-neon-cyan border border-slate-600 px-3 py-1 rounded text-xs flex items-center gap-2 transition-colors shadow-lg select-none"
                     >
                         <ScanEye size={14} /> RESET CAM
                     </button>
@@ -670,8 +673,8 @@ const App: React.FC = () => {
             </div>
 
             {/* Bottom Left Instructions */}
-            <div className={`absolute bottom-6 ${isSidebarCollapsed ? 'left-20' : 'left-80'} ml-6 pointer-events-none text-[10px] text-slate-500 font-mono z-20 transition-all duration-500`}>
-                <div>[WASD / ARROWS] PAN CAMERA (AUTO-FOLLOW ACTIVE)</div>
+            <div className={`absolute bottom-6 ${isSidebarCollapsed ? 'left-20' : 'left-80'} ml-6 pointer-events-none text-[10px] text-slate-500 font-mono z-20 transition-all duration-500 select-none`}>
+                <div>[DRAG / WASD / ARROWS] PAN CAMERA</div>
                 <div>[Q / E / - / =] ZOOM LEVEL</div>
                 <div className="text-neon-cyan mt-1">[MOUSE HOVER] INSPECT CELLULAR NODE</div>
             </div>

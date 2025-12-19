@@ -282,7 +282,7 @@ export const Controls: React.FC<ControlsProps> = ({
                 ) : (
                     <Activity className="group-hover:text-neon-cyan transition-colors" size={20} />
                 )}
-                {isAnalyzing ? 'UPLINKING...' : 'AI ASSISTANT'}
+                {isAnalyzing ? 'UPLINKING...' : 'ASSIMULATE'}
                 </button>
                 <p className="text-[10px] text-slate-600 mt-3 text-center tracking-widest uppercase">
                 Gemini Neural Link // Active

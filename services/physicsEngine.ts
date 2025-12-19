@@ -219,7 +219,12 @@ export class PhysicsEngine {
       if (stress > 0.15) {
           s.currentRestLength += (dist - s.currentRestLength) * (plasticity * (0.2 + memory));
       } else {
-          s.currentRestLength += (s.restLength - s.currentRestLength) * 0.0002;
+          // Forgetting / Decay of Adaptation
+          // Increased rate for "forgetting" unsupported adaptations.
+          // High memory -> slower forgetting (better retention).
+          const retention = memory * 0.8; // 0.0 to 0.8
+          const forgettingRate = 0.003 + (1.0 - retention) * 0.005; 
+          s.currentRestLength += (s.restLength - s.currentRestLength) * forgettingRate;
       }
 
       const fx = dx * forceVal * 0.5;

@@ -50,6 +50,7 @@ const FS_SOURCE = `
     vec2 uv = gl_FragCoord.xy / u_resolution.xy;
     float aspect = u_resolution.x / u_resolution.y;
     float field = 0.0;
+    float weightedMemory = 0.0;
     
     for (int i = 0; i < ${MAX_PARTICLES}; i++) {
         if (i >= u_count) break;
@@ -62,12 +63,25 @@ const FS_SOURCE = `
         float memory = p.w;
         
         if (charge > 0.01) {
+            // Pulse Logic based on Memory
+            // High Memory (1.0) -> Frequency 2.0, Depth 0.0 -> Stable Glow
+            // Low Memory (0.0) -> Frequency 10.0, Depth 0.4 -> Rapid Flicker
             float pulseFrequency = 2.0 + (1.0 - memory) * 8.0; 
             float pulseDepth = (1.0 - memory) * 0.4; 
             float pulse = 1.0 - pulseDepth * (0.5 + 0.5 * sin(u_time * pulseFrequency));
+            
+            // Intensity Logic
             float intensity = charge * pulse * (0.8 + 0.2 * memory);
-            field += (intensity * 0.003) / (dist * dist + 0.00005);
+            float contrib = (intensity * 0.003) / (dist * dist + 0.00005);
+            
+            field += contrib;
+            weightedMemory += memory * contrib;
         }
+    }
+    
+    float avgMemory = 0.0;
+    if (field > 0.0001) {
+        avgMemory = weightedMemory / field;
     }
     
     vec2 flowOffset = vec2(
@@ -81,14 +95,29 @@ const FS_SOURCE = `
     
     vec4 color = vec4(0.0);
     if (flow > 0.05) {
-       vec3 c1 = vec3(0.0, 0.2, 0.4); 
-       vec3 c2 = vec3(0.0, 1.0, 0.8); 
-       vec3 c3 = vec3(0.8, 1.0, 1.0); 
+       // Visualizing Memory via Color
+       // Low Memory -> Violet/Purple (Unstable)
+       vec3 cLow = vec3(0.6, 0.0, 0.9);
+       // High Memory -> Cyan/Teal (Stable)
+       vec3 cHigh = vec3(0.0, 1.0, 0.9);
+       
+       vec3 baseColor = mix(cLow, cHigh, smoothstep(0.2, 0.8, avgMemory));
+       
+       vec3 cDark = baseColor * 0.2;
+       vec3 cMid = baseColor;
+       vec3 cBright = vec3(0.9, 1.0, 1.0); 
+
        float t = smoothstep(0.05, 1.0, flow);
-       vec3 rgb = mix(c1, c2, smoothstep(0.0, 0.5, t));
-       rgb = mix(rgb, c3, smoothstep(0.5, 1.0, t));
+       vec3 rgb = mix(cDark, cMid, smoothstep(0.0, 0.5, t));
+       rgb = mix(rgb, cBright, smoothstep(0.5, 1.0, t));
+       
+       // Extra "Electric" jitter for low memory
+       if (avgMemory < 0.3) {
+           rgb += (hash(uv * u_time) * 0.1) * (1.0 - t);
+       }
+       
        float alpha = smoothstep(0.02, 0.2, flow);
-       color = vec4(rgb * alpha, alpha * 0.8);
+       color = vec4(rgb * alpha, alpha * 0.85);
     }
     gl_FragColor = color;
   }
@@ -238,15 +267,23 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, width, hei
         const pCount = particles.length;
         const genomeColor = bot.genome.color || '#39ff14';
 
+        // Dynamic Color Logic based on Charge Density
+        let activeColor = genomeColor;
+        const chargeDensity = bot.totalCharge / (pCount || 1);
+        if (chargeDensity > 0.05) {
+            const match = genomeColor.match(/hsl\((\d+\.?\d*),\s*(\d+)%,\s*(\d+)%\)/);
+            if (match) {
+                const h = match[1];
+                const s = Math.min(100, parseInt(match[2]) + chargeDensity * 50);
+                const l = Math.min(95, parseInt(match[3]) + chargeDensity * 40);
+                activeColor = `hsl(${h}, ${s}%, ${l}%)`;
+            }
+        }
+
         for (let j = 0; j < pCount; j++) {
             const p = particles[j];
-            let typeColor = genomeColor;
             
-            // Simplified check for color (optimization)
-            // Ideally should be cached in particle, but we use heuristic here for now
-            // or pass genome maps. For speed, just use Genome Color unless charged.
-            
-            ctx.fillStyle = typeColor;
+            ctx.fillStyle = activeColor;
             ctx.beginPath();
             ctx.arc(p.renderPos.x, p.renderPos.y, 8, 0, Math.PI * 2); 
             ctx.fill();

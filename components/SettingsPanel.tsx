@@ -99,6 +99,19 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
              <div className="space-y-1">
                 <div className="flex justify-between">
+                    <span>Training Time (Ticks)</span>
+                    <span className="text-neon-cyan">{localConfig.generationDuration || 600}</span>
+                </div>
+                <input 
+                    type="range" min="300" max="2000" step="50"
+                    value={localConfig.generationDuration || 600}
+                    onChange={(e) => handleChange('generationDuration', parseInt(e.target.value))}
+                    className="w-full accent-neon-cyan h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer"
+                />
+             </div>
+
+             <div className="space-y-1">
+                <div className="flex justify-between">
                     <span>Xenobot Scale</span>
                     <span className="text-neon-cyan">{localConfig.gridScale}px</span>
                 </div>
@@ -152,6 +165,19 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     type="range" min="0.0001" max="0.01" step="0.0001"
                     value={localConfig.plasticity}
                     onChange={(e) => handleChange('plasticity', parseFloat(e.target.value))}
+                    className="w-full accent-neon-cyan h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer"
+                />
+             </div>
+
+             <div className="space-y-1">
+                <div className="flex justify-between">
+                    <span>Sync Rate / Smoothing (Low = Smooth)</span>
+                    <span className="text-neon-cyan">{localConfig.syncRate?.toFixed(2) || '0.50'}</span>
+                </div>
+                <input 
+                    type="range" min="0.01" max="1.0" step="0.01"
+                    value={localConfig.syncRate || 0.5}
+                    onChange={(e) => handleChange('syncRate', parseFloat(e.target.value))}
                     className="w-full accent-neon-cyan h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer"
                 />
              </div>

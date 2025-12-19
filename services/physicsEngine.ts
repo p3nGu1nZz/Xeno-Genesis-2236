@@ -19,6 +19,8 @@ export class PhysicsEngine {
     const { genes, gridSize } = genome;
     const scale = this.config.gridScale;
 
+    // Use a flat array for particle indices map to avoid array-of-arrays allocation if possible,
+    // but here mapped by y/x is fine for init.
     const particleMap: number[][] = Array(gridSize).fill(null).map(() => Array(gridSize).fill(-1));
 
     for (let y = 0; y < gridSize; y++) {
@@ -30,6 +32,7 @@ export class PhysicsEngine {
           particles.push({
             pos: { x: px, y: py },
             oldPos: { x: px, y: py },
+            renderPos: { x: px, y: py }, 
             mass: 1,
             force: { x: 0, y: 0 },
             charge: 0,
@@ -38,46 +41,50 @@ export class PhysicsEngine {
       }
     }
 
+    // Neighbors definition (static)
+    const neighbors = [
+      { dx: 1, dy: 0, dist: 1 },       
+      { dx: 0, dy: 1, dist: 1 },       
+      { dx: 1, dy: 1, dist: 1.414 },   
+      { dx: -1, dy: 1, dist: 1.414 }   
+    ];
+
     for (let y = 0; y < gridSize; y++) {
       for (let x = 0; x < gridSize; x++) {
         const p1Idx = particleMap[y][x];
         if (p1Idx === -1) continue;
 
-        const neighbors = [
-          { dx: 1, dy: 0, dist: 1 },       
-          { dx: 0, dy: 1, dist: 1 },       
-          { dx: 1, dy: 1, dist: 1.414 },   
-          { dx: -1, dy: 1, dist: 1.414 }   
-        ];
+        for (let i = 0; i < neighbors.length; i++) {
+            const { dx, dy, dist } = neighbors[i];
+            const nx = x + dx;
+            const ny = y + dy;
+            
+            if (nx >= 0 && nx < gridSize && ny >= 0 && ny < gridSize) {
+                const p2Idx = particleMap[ny][nx];
+                if (p2Idx !== -1) {
+                const type1 = genes[y][x];
+                const type2 = genes[ny][nx];
+                
+                const isMuscle = (type1 === CellType.HEART || type2 === CellType.HEART);
+                const isNeuron = (type1 === CellType.NEURON || type2 === CellType.NEURON);
+                
+                // ADJUSTED STIFFNESS:
+                // Neurons (0.8) act as semi-rigid struts.
+                // Skin/Muscle (0.3) are softer for organic movement.
+                const stiffness = isNeuron ? 0.8 : 0.3;
 
-        neighbors.forEach(({ dx, dy, dist }) => {
-          const nx = x + dx;
-          const ny = y + dy;
-          if (nx >= 0 && nx < gridSize && ny >= 0 && ny < gridSize) {
-            const p2Idx = particleMap[ny][nx];
-            if (p2Idx !== -1) {
-              const type1 = genes[y][x];
-              const type2 = genes[ny][nx];
-              
-              const isMuscle = (type1 === CellType.HEART || type2 === CellType.HEART);
-              const isNeuron = (type1 === CellType.NEURON || type2 === CellType.NEURON);
-              
-              // STIFFNESS LOGIC:
-              // Neurons are structural struts.
-              const stiffness = isNeuron ? 0.95 : 0.4;
-
-              springs.push({
-                p1: p1Idx,
-                p2: p2Idx,
-                restLength: dist * scale,
-                currentRestLength: dist * scale,
-                stiffness,
-                isMuscle,
-                phaseOffset: (x + y) * 0.5
-              });
+                springs.push({
+                    p1: p1Idx,
+                    p2: p2Idx,
+                    restLength: dist * scale,
+                    currentRestLength: dist * scale,
+                    stiffness,
+                    isMuscle,
+                    phaseOffset: (x + y) * 0.5
+                });
+                }
             }
-          }
-        });
+        }
       }
     }
 
@@ -97,26 +104,28 @@ export class PhysicsEngine {
     const dt = TIMESTEP;
     const dtSq = dt * dt;
 
-    // COLLECTIVE AWARENESS CALCULATION:
-    // Calculate the average bioelectric memory of the active population.
+    // Optimization: Calculate collective info in a simple loop
     let totalMemory = 0;
     let livingCount = 0;
-    this.bots.forEach(b => {
+    const botCount = this.bots.length;
+    
+    for(let i = 0; i < botCount; i++) {
+        const b = this.bots[i];
         if (!b.isDead) {
             totalMemory += b.genome.bioelectricMemory;
             livingCount++;
         }
-    });
+    }
     
-    // Higher average memory implies the environment "recognizes" the lifeforms, reducing resistance.
-    // 0.5 is baseline. Range of adjustment is +/- 0.04.
     const avgMemory = livingCount > 0 ? totalMemory / livingCount : 0.5;
     const collectiveFriction = this.config.friction + (avgMemory - 0.5) * 0.08;
+    // Clamp
+    const fluidBaseFriction = collectiveFriction < 0.85 ? 0.85 : (collectiveFriction > 0.995 ? 0.995 : collectiveFriction);
     
-    // Clamp friction to prevent instability (max 0.995) or too much drag (min 0.85)
-    const fluidBaseFriction = Math.min(0.995, Math.max(0.85, collectiveFriction));
-    
-    for (let i = 0; i < this.bots.length; i++) {
+    // Optimization: Removed separate visual smoothing loop.
+    // It is now integrated into updateBot's integration loop.
+
+    for (let i = 0; i < botCount; i++) {
       const bot = this.bots[i];
       if (bot.isDead) continue;
       this.updateBot(bot, time, dt, dtSq, fluidBaseFriction);
@@ -131,37 +140,49 @@ export class PhysicsEngine {
     const mSpeed = this.config.muscleSpeed;
     const plasticity = this.config.plasticity;
     const memory = bot.genome.bioelectricMemory || 0.5;
+    const syncRate = this.config.syncRate || 0.5; // Visual smoothing
     
-    // 1. Particles: Gravity, Buoyancy & Fluid Dynamics
-    for (let i = 0; i < bot.particles.length; i++) {
-      const p = bot.particles[i];
+    const particles = bot.particles;
+    const springs = bot.springs;
+    const pCount = particles.length;
+    const sCount = springs.length;
+
+    const chargeDensity = bot.totalCharge / (pCount || 1);
+    const liftFromCharge = chargeDensity * 0.3;
+    const baseBuoyancyFactor = 0.85 + liftFromCharge;
+    const currentStrength = 0.08;
+    const groundY = this.groundY;
+
+    // 1. Particles: Forces
+    // Converted forEach to for loop
+    for (let i = 0; i < pCount; i++) {
+      const p = particles[i];
       p.force.x = 0;
       p.force.y = gravity; 
 
-      // DEPTH CALCULATIONS
-      // Normalize depth: 0 at surface (y=0 approx), 1 at ground.
-      const depthRatio = Math.max(0, Math.min(1, p.pos.y / this.groundY));
+      // Depth
+      // Inline Clamp: Math.max(0, Math.min(1, val))
+      let depthRatio = p.pos.y / groundY;
+      if (depthRatio < 0) depthRatio = 0;
+      if (depthRatio > 1) depthRatio = 1;
 
-      // FLUID DYNAMICS:
-      // 1. Variable Buoyancy: Density increases with depth, increasing upward force.
-      // Base buoyancy is 85% of gravity, increasing to 95% at bottom.
-      const buoyancy = gravity * (0.85 + depthRatio * 0.1); 
+      // Buoyancy
+      const buoyancy = gravity * (baseBuoyancyFactor + depthRatio * 0.1); 
       p.force.y -= buoyancy;
 
-      // 2. Fluid Currents:
-      // Simulating a sinusoidal horizontal current that varies with depth and time.
-      const currentStrength = 0.08;
+      // Current
       const currentFlow = Math.sin(time * 0.5 + depthRatio * 4.0) * currentStrength;
       p.force.x += currentFlow;
 
       p.charge *= decay;
     }
 
-    // 2. Springs: Forces & Bioelectricity
-    for (let i = 0; i < bot.springs.length; i++) {
-      const s = bot.springs[i];
-      const p1 = bot.particles[s.p1];
-      const p2 = bot.particles[s.p2];
+    // 2. Springs
+    // Converted forEach to for loop
+    for (let i = 0; i < sCount; i++) {
+      const s = springs[i];
+      const p1 = particles[s.p1];
+      const p2 = particles[s.p2];
 
       const dx = p2.pos.x - p1.pos.x;
       const dy = p2.pos.y - p1.pos.y;
@@ -171,9 +192,9 @@ export class PhysicsEngine {
 
       const dist = Math.sqrt(distSq);
 
-      // Muscle Logic
       let targetLen = s.currentRestLength;
       if (s.isMuscle) {
+        // avgCharge inlined
         const avgCharge = (p1.charge + p2.charge) * 0.5;
         const freqMod = 1.0 + avgCharge * 4.0; 
         const contraction = Math.sin(time * mSpeed * freqMod + (s.phaseOffset || 0));
@@ -184,12 +205,13 @@ export class PhysicsEngine {
       const forceVal = s.stiffness * diff;
 
       // Bioelectric generation
-      const stress = Math.abs(diff);
+      const stress = diff < 0 ? -diff : diff; // Math.abs
       const chargeGen = stress * 0.6;
       
       if (chargeGen > 0.01) {
-        p1.charge = Math.min(1, p1.charge + chargeGen);
-        p2.charge = Math.min(1, p2.charge + chargeGen);
+        // Inlined Math.min(1, ...)
+        p1.charge = (p1.charge + chargeGen > 1) ? 1 : (p1.charge + chargeGen);
+        p2.charge = (p2.charge + chargeGen > 1) ? 1 : (p2.charge + chargeGen);
       }
       activeCharge += (p1.charge + p2.charge);
 
@@ -211,19 +233,23 @@ export class PhysicsEngine {
     
     bot.totalCharge = activeCharge;
 
-    // 3. Integration & Collision
+    // 3. Integration & Collision & Visual Smoothing
     let cx = 0, cy = 0;
-    for (let i = 0; i < bot.particles.length; i++) {
-      const p = bot.particles[i];
-      
-      // DYNAMIC VISCOSITY:
-      // Depth increases viscosity slightly (fluid gets "thicker").
-      const depthViscosity = 1.0 - (Math.max(0, p.pos.y / this.groundY) * 0.03);
-      
-      // Individual streamlining: Higher memory acts as better "swimming technique".
-      const individualFactor = 1.0 + (memory * 0.005);
+    
+    // Pre-calculate loop invariants
+    const chargeDrag = 1.0 - (chargeDensity * 0.15);
+    const individualFactor = 1.0 + (memory * 0.005);
+    const baseFriction = fluidBaseFriction * individualFactor * chargeDrag;
 
-      const effectiveFriction = fluidBaseFriction * depthViscosity * individualFactor;
+    for (let i = 0; i < pCount; i++) {
+      const p = particles[i];
+      
+      // Depth Viscosity
+      let depthVal = p.pos.y / groundY;
+      if (depthVal < 0) depthVal = 0;
+      const depthViscosity = 1.0 - (depthVal * 0.03);
+      
+      const effectiveFriction = baseFriction * depthViscosity;
 
       const vx = (p.pos.x - p.oldPos.x) * effectiveFriction;
       const vy = (p.pos.y - p.oldPos.y) * effectiveFriction;
@@ -234,31 +260,36 @@ export class PhysicsEngine {
       p.pos.x += vx + p.force.x * dtSq;
       p.pos.y += vy + p.force.y * dtSq;
 
-      // Bottom of Tank (Soft Bounce)
-      if (p.pos.y > this.groundY) {
-        p.pos.y = this.groundY;
+      // Bottom Constraint
+      if (p.pos.y > groundY) {
+        p.pos.y = groundY;
         const vy_impact = (p.pos.y - p.oldPos.y);
-        p.oldPos.y = p.pos.y + vy_impact * 0.6; // Slightly more bounce on floor
+        p.oldPos.y = p.pos.y + vy_impact * 0.6; 
       }
 
-      // Surface Tension (Top)
+      // Top Constraint
       if (p.pos.y < -2000) {
           p.pos.y = -2000;
           p.oldPos.y = p.pos.y;
       }
 
+      // --- VISUAL SMOOTHING INTEGRATED ---
+      // Simple Lerp
+      p.renderPos.x += (p.pos.x - p.renderPos.x) * syncRate;
+      p.renderPos.y += (p.pos.y - p.renderPos.y) * syncRate;
+
       cx += p.pos.x;
       cy += p.pos.y;
     }
 
-    if (bot.particles.length > 0) {
-      bot.centerOfMass.x = cx / bot.particles.length;
-      bot.centerOfMass.y = cy / bot.particles.length;
+    if (pCount > 0) {
+      bot.centerOfMass.x = cx / pCount;
+      bot.centerOfMass.y = cy / pCount;
     }
   }
 
   evaluateFitness(bot: Xenobot): number {
     const dist = bot.centerOfMass.x - bot.startPosition.x;
-    return Math.max(0, dist);
+    return dist < 0 ? 0 : dist; // Math.max(0, dist)
   }
 }

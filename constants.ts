@@ -14,6 +14,8 @@ export const DEFAULT_CONFIG: SimulationConfig = {
   gridScale: 50, 
   bioelectricDecay: 0.96,
   plasticity: 0.002, 
+  syncRate: 0.2, // Default smoothing factor
+  generationDuration: GENERATION_TIME,
 };
 
 export const COLORS = {

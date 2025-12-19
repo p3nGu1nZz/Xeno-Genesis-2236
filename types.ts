@@ -19,6 +19,7 @@ export interface CameraState {
 export interface Particle {
   pos: Point;
   oldPos: Point;
+  renderPos: Point; 
   mass: number;
   force: Point;
   charge: number; 
@@ -57,7 +58,7 @@ export interface Xenobot {
 }
 
 export interface SimulationConfig {
-  populationSize: number; // Added
+  populationSize: number;
   gravity: number;
   friction: number;
   muscleStrength: number;
@@ -66,6 +67,8 @@ export interface SimulationConfig {
   gridScale: number;
   bioelectricDecay: number; 
   plasticity: number; 
+  syncRate: number; 
+  generationDuration: number; 
 }
 
 export interface AnalysisResult {
@@ -79,4 +82,20 @@ export interface SaveData {
   population: Genome[];
   generation: number;
   timestamp: number;
+}
+
+// --- Worker Types ---
+
+export type WorkerMessageType = 'INIT' | 'START' | 'STOP' | 'UPDATE_SETTINGS' | 'TICK' | 'LOAD_STATE';
+
+export interface WorkerMessage {
+  type: WorkerMessageType;
+  payload?: any;
+}
+
+export interface TickPayload {
+  bots: Xenobot[];
+  timeLeft: number;
+  generation: number;
+  bestGenome: Genome | null;
 }

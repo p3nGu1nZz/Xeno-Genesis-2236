@@ -1,6 +1,6 @@
 
 import { Xenobot, Particle, Spring, Genome, CellType, SimulationConfig } from '../types';
-import { DEFAULT_CONFIG, TIMESTEP, CONSTRAINT_ITERATIONS, CILIA_FORCE, METABOLIC_DECAY, INITIAL_YOLK_ENERGY, SURFACE_TENSION } from '../constants';
+import { DEFAULT_CONFIG, TIMESTEP, CONSTRAINT_ITERATIONS, CILIA_FORCE, METABOLIC_DECAY, INITIAL_YOLK_ENERGY, SURFACE_TENSION, WORLD_WIDTH, EDGE_BUFFER, WORLD_HEIGHT_LIMIT } from '../constants';
 
 const uid = () => Math.random().toString(36).substr(2, 9);
 
@@ -75,6 +75,13 @@ export class PhysicsEngine {
                 const isNeuron = (type1 === CellType.NEURON || type2 === CellType.NEURON);
                 const stiffness = isNeuron ? 0.8 : 0.3;
 
+                // Propulsion Logic:
+                // For Bilateral Polarity (Heart at Posterior/Bottom, Neuron at Anterior/Top),
+                // we want a propulsion vector that drives the bot forward.
+                // A phase offset based on Y creates a metachronal wave along the body length.
+                // phaseOffset = y * 0.5 creates a wave traveling top-to-bottom.
+                const phaseOffset = y * 0.5;
+
                 springs.push({
                     p1: p1Idx,
                     p2: p2Idx,
@@ -82,7 +89,7 @@ export class PhysicsEngine {
                     currentRestLength: dist * scale,
                     stiffness,
                     isMuscle,
-                    phaseOffset: (x + y) * 0.5
+                    phaseOffset
                 });
                 }
             }
@@ -240,10 +247,8 @@ export class PhysicsEngine {
     bot.energy -= METABOLIC_DECAY;
     bot.age++;
 
-    // "Thanatotranscriptome": If energy depleted, bot dies (stops moving)
     if (bot.energy <= 0) {
         bot.isDead = true;
-        // Optionally turn color gray here in renderer, but logic stops here
         return; 
     }
 
@@ -276,45 +281,42 @@ export class PhysicsEngine {
       const currentFlow = Math.sin(time * 0.5 + depthRatio * 4.0) * currentStrength;
       p.force.x += currentFlow;
       
-      // --- BROWNIAN / CELLULAR NOISE ---
-      // Simulates the inherent noisy environment of micro-scale biology and individual cilia beating independently
-      // This is crucial for the "stochastic stutter-crawl" mentioned in the 2025 paper.
+      // Brownian Noise
       p.force.x += (Math.random() - 0.5) * 0.5;
       p.force.y += (Math.random() - 0.5) * 0.5;
+
+      // --- WORLD BOUNDARY REPULSION (Avoid Edges) ---
+      // Push bot away if it gets too close to the left (0) or right (WORLD_WIDTH) edge
+      if (p.pos.x < EDGE_BUFFER) {
+          const push = (EDGE_BUFFER - p.pos.x) * 0.005; // Gentle push
+          p.force.x += push;
+      } else if (p.pos.x > WORLD_WIDTH - EDGE_BUFFER) {
+          const push = (p.pos.x - (WORLD_WIDTH - EDGE_BUFFER)) * 0.005;
+          p.force.x -= push;
+      }
 
       // --- CILIARY PROPULSION (Basal Motility) ---
       const dx = p.pos.x - bot.centerOfMass.x;
 
       if (acousticActive) {
-          // Linearizing effect: Coordinated push in one direction
-          // "Significant increase in peak velocity" - 2025 Paper
           p.force.x += CILIA_FORCE; 
       } else {
-          // New Peristaltic Wave Motion (Replacing Rotation)
-          // Synchronized metachronal wave traveling along the body axis
-          // Phase depends on x-position relative to CoM
-          
-          const waveFreq = 3.0 + (memory * 2.0); // 3-5 Hz based on memory
+          // Peristaltic Wave Motion
+          const waveFreq = 3.0 + (memory * 2.0); 
           const phase = (dx * 0.05) - (time * waveFreq * Math.PI * 2);
-          
-          // Asymmetric stroke for net propulsion
           const beat = Math.sin(phase);
           
           let thrustX = 0;
           let liftY = 0;
           
           if (beat > 0) {
-             // Power Stroke: Push forward (+X), Grip down (+Y)
              thrustX = CILIA_FORCE * 1.5 * beat;
              liftY = CILIA_FORCE * 0.2 * beat;
           } else {
-             // Recovery Stroke: Reduce drag, Lift up (-Y)
-             // beat is negative here
-             thrustX = CILIA_FORCE * 0.3 * beat; // Negative X (drag)
-             liftY = CILIA_FORCE * 1.0 * beat;   // Negative Y (Up)
+             thrustX = CILIA_FORCE * 0.3 * beat; 
+             liftY = CILIA_FORCE * 1.0 * beat;   
           }
           
-          // Plasticity Noise: Lower memory = less coordinated
           if (memory < 0.8) {
               const noiseScale = (0.8 - memory);
               thrustX += (Math.random() - 0.5) * noiseScale * CILIA_FORCE;
@@ -325,8 +327,7 @@ export class PhysicsEngine {
           p.force.y += liftY;
       }
 
-      // --- SELF-ASSEMBLY (Surface Tension) ---
-      // Pull towards Center of Mass to maintain spherical "Basal" shape
+      // Self-Assembly
       const dxSelf = bot.centerOfMass.x - p.pos.x;
       const dySelf = bot.centerOfMass.y - p.pos.y;
       p.force.x += dxSelf * SURFACE_TENSION;
@@ -335,7 +336,7 @@ export class PhysicsEngine {
       p.charge *= decay;
     }
 
-    // Spring Physics (Muscles & Structure)
+    // Spring Physics
     for (let i = 0; i < sCount; i++) {
       const s = springs[i];
       const p1 = particles[s.p1];
@@ -352,7 +353,6 @@ export class PhysicsEngine {
       let targetLen = s.currentRestLength;
       
       if (s.isMuscle) {
-        // Metabolic Cost of Movement
         bot.energy -= METABOLIC_DECAY * 0.1;
 
         const avgCharge = (p1.charge + p2.charge) * 0.5;
@@ -399,7 +399,7 @@ export class PhysicsEngine {
     const individualFactor = 1.0 + (memory * 0.005);
     const baseFriction = fluidBaseFriction * individualFactor * chargeDrag;
     
-    // We removed smoothing logic from here as it is now handled in smoothRenderPositions()
+    const WALL_BOUNCE = 0.3; // Amount of energy kept when hitting wall
 
     for (let i = 0; i < pCount; i++) {
       const p = particles[i];
@@ -419,14 +419,33 @@ export class PhysicsEngine {
       p.pos.x += vx + p.force.x * dtSq;
       p.pos.y += vy + p.force.y * dtSq;
 
+      // --- WORLD BOUNDARY CONSTRAINTS (Hard Stops) ---
+      
+      // Floor
       if (p.pos.y > groundY) {
         p.pos.y = groundY;
         const vy_impact = (p.pos.y - p.oldPos.y);
         p.oldPos.y = p.pos.y + vy_impact * 0.6; 
       }
-      if (p.pos.y < -2000) {
-          p.pos.y = -2000;
+      
+      // Ceiling (Height Limit)
+      if (p.pos.y < WORLD_HEIGHT_LIMIT) {
+          p.pos.y = WORLD_HEIGHT_LIMIT;
           p.oldPos.y = p.pos.y;
+      }
+
+      // Left Wall
+      if (p.pos.x < 0) {
+          p.pos.x = 0;
+          const vx_impact = (p.pos.x - p.oldPos.x);
+          p.oldPos.x = p.pos.x + vx_impact * WALL_BOUNCE; // Reverse velocity slightly
+      }
+
+      // Right Wall
+      if (p.pos.x > WORLD_WIDTH) {
+          p.pos.x = WORLD_WIDTH;
+          const vx_impact = (p.pos.x - p.oldPos.x);
+          p.oldPos.x = p.pos.x + vx_impact * WALL_BOUNCE;
       }
 
       cx += p.pos.x;
@@ -440,7 +459,6 @@ export class PhysicsEngine {
   }
 
   evaluateFitness(bot: Xenobot): number {
-    // Paper: Distance traveled is key metric, but survival (energy) matters
     if (bot.isDead) return 0;
     const dist = bot.centerOfMass.x - bot.startPosition.x;
     return dist < 0 ? 0 : dist; 

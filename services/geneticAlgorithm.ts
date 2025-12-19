@@ -1,59 +1,49 @@
+
 import { Genome, CellType } from '../types';
 import { GRID_SIZE } from '../constants';
 
 const MUTATION_RATE = 0.2; 
 
-// "Nervous Ring" Topology Definition
-// Central 2x2 Core: NEURON
-// Surrounding Ring: Alternating HEART / SKIN
-const PLATONIC_IDEAL_MAP: Record<string, CellType> = {};
+// "Bilateral Polarity" Template
+// Row 0 (Anterior): NEURON
+// Row N-1 (Posterior): HEART
+// Intermediate: SKIN
+const BILATERAL_TEMPLATE: Record<string, CellType> = {};
 
-// Initialize the ideal map
+// Initialize the bilateral map for reference (optional, used if we want to enforce via platonic pull)
 for (let y = 0; y < GRID_SIZE; y++) {
     for (let x = 0; x < GRID_SIZE; x++) {
         const key = `${x},${y}`;
-        // Center 2x2 (Indices 2,3 for GRID_SIZE 6)
-        if (x >= 2 && x <= 3 && y >= 2 && y <= 3) {
-            PLATONIC_IDEAL_MAP[key] = CellType.NEURON;
-        }
-        // Ring 1 (Indices 1 to 4)
-        else if (x >= 1 && x <= 4 && y >= 1 && y <= 4) {
-            // Alternating pattern for the ring
-            if ((x + y) % 2 === 0) {
-                PLATONIC_IDEAL_MAP[key] = CellType.HEART;
-            } else {
-                PLATONIC_IDEAL_MAP[key] = CellType.SKIN;
-            }
-        } 
-        // Outer shell
-        else {
-            PLATONIC_IDEAL_MAP[key] = CellType.EMPTY;
+        if (y === 0) {
+            BILATERAL_TEMPLATE[key] = CellType.NEURON;
+        } else if (y === GRID_SIZE - 1) {
+            BILATERAL_TEMPLATE[key] = CellType.HEART;
+        } else {
+            BILATERAL_TEMPLATE[key] = CellType.SKIN;
         }
     }
 }
 
 export function createRandomGenome(generation: number = 0, targetHue?: number): Genome {
-  // 20% Chance to spawn a "Prophet" bot that adheres to the Nervous Ring topology
-  // This helps seed the population with the desired trait if extinction occurs.
-  if (Math.random() < 0.2) {
-      return createNervousRingGenome(generation, targetHue);
-  }
-
   const genes: CellType[][] = [];
+  
+  // Enforce Bilateral Polarity Structure
   for (let y = 0; y < GRID_SIZE; y++) {
     const row: CellType[] = [];
     for (let x = 0; x < GRID_SIZE; x++) {
-      const rand = Math.random();
-      if (rand < 0.5) row.push(CellType.EMPTY);
-      else if (rand < 0.7) row.push(CellType.SKIN);
-      else if (rand < 0.9) row.push(CellType.HEART);
-      else row.push(CellType.NEURON); 
+      if (y === 0) {
+        // Anterior Edge -> Sensory/Control (Neurons)
+        row.push(CellType.NEURON);
+      } else if (y === GRID_SIZE - 1) {
+        // Posterior Edge -> Propulsion (Heart)
+        row.push(CellType.HEART);
+      } else {
+        // Intermediate -> Structural Chassis (Skin)
+        row.push(CellType.SKIN);
+      }
     }
     genes.push(row);
   }
-  
-  // Ensure center has some structure so it's not empty
-  genes[Math.floor(GRID_SIZE/2)][Math.floor(GRID_SIZE/2)] = CellType.SKIN;
 
   let h: number;
   if (targetHue !== undefined) {
@@ -72,37 +62,8 @@ export function createRandomGenome(generation: number = 0, targetHue?: number): 
     fitness: 0,
     generation,
     color,
-    bioelectricMemory: Math.random()
+    bioelectricMemory: Math.random() // High variability in plasticity
   };
-}
-
-function createNervousRingGenome(generation: number, targetHue?: number): Genome {
-    const genes: CellType[][] = [];
-    for (let y = 0; y < GRID_SIZE; y++) {
-        const row: CellType[] = [];
-        for (let x = 0; x < GRID_SIZE; x++) {
-            row.push(PLATONIC_IDEAL_MAP[`${x},${y}`] || CellType.EMPTY);
-        }
-        genes.push(row);
-    }
-
-    let h: number;
-    if (targetHue !== undefined) {
-        h = (targetHue + (Math.random() * 20 - 10)) % 360;
-    } else {
-        h = Math.random() * 360;
-    }
-    if (h < 0) h += 360;
-
-    return {
-        id: "PLATONIC-" + Math.random().toString(36).substr(2, 6),
-        gridSize: GRID_SIZE,
-        genes,
-        fitness: 0,
-        generation,
-        color: `hsl(${h.toFixed(0)}, 80%, 50%)`, // Slightly brighter to indicate special status
-        bioelectricMemory: 0.8 // High plasticity to adapt quickly
-    };
 }
 
 function crossover(parentA: Genome, parentB: Genome, generation: number): Genome {
@@ -147,43 +108,26 @@ function mutate(genome: Genome): Genome {
   const newGenes = genome.genes.map(row => [...row]);
   let mutated = false;
   
-  // 1. Structural Growth / Decay
-  if (Math.random() < 0.3) {
-    for (let y = 1; y < genome.gridSize - 1; y++) {
-      for (let x = 1; x < genome.gridSize - 1; x++) {
-        if (newGenes[y][x] === CellType.EMPTY && Math.random() < 0.1) {
-            const neighbors = [newGenes[y+1][x], newGenes[y-1][x], newGenes[y][x+1], newGenes[y][x-1]];
-            if (neighbors.some(n => n !== CellType.EMPTY)) {
-                newGenes[y][x] = Math.random() > 0.5 ? CellType.SKIN : CellType.NEURON;
-                mutated = true;
-            }
-        }
-      }
-    }
-  }
-
-  // 2. Platonic Pull (The bias towards Nervous Ring)
-  // Small chance for any cell to spontaneously align with the Platonic Ideal
-  if (Math.random() < 0.4) { // 40% chance that a mutation event includes a platonic shift
-      const x = Math.floor(Math.random() * genome.gridSize);
-      const y = Math.floor(Math.random() * genome.gridSize);
-      const idealType = PLATONIC_IDEAL_MAP[`${x},${y}`];
-      
-      if (idealType !== undefined && newGenes[y][x] !== idealType) {
-          // 10% chance to flip to ideal if selected
-          if (Math.random() < 0.1) {
-              newGenes[y][x] = idealType;
-              mutated = true;
-          }
-      }
-  }
-
-  // 3. Random Noise Mutation
+  // Mutation Logic with Bilateral Bias
+  // We allow mutation, but we bias slightly towards maintaining the polarity
+  
+  // 1. Random Point Mutation
   for (let y = 0; y < genome.gridSize; y++) {
     for (let x = 0; x < genome.gridSize; x++) {
-      if (Math.random() < 0.05) {
-        const types = [CellType.EMPTY, CellType.SKIN, CellType.HEART, CellType.NEURON];
-        newGenes[y][x] = types[Math.floor(Math.random() * types.length)];
+      if (Math.random() < 0.05) { // 5% chance per cell
+        // Bias mutation based on row
+        const rand = Math.random();
+        if (y === 0) {
+            // Anterior: Favor Neurons
+            newGenes[y][x] = rand < 0.8 ? CellType.NEURON : CellType.SKIN;
+        } else if (y === genome.gridSize - 1) {
+            // Posterior: Favor Heart
+            newGenes[y][x] = rand < 0.8 ? CellType.HEART : CellType.SKIN;
+        } else {
+            // Center: Mix
+            const types = [CellType.EMPTY, CellType.SKIN, CellType.HEART];
+            newGenes[y][x] = types[Math.floor(Math.random() * types.length)];
+        }
         mutated = true;
       }
     }
@@ -231,7 +175,6 @@ export function evolvePopulation(population: Genome[], generation: number, maxPo
       
       const sorted = [...pool].sort((a, b) => b.fitness - a.fitness);
       
-      // Variable growth
       const growthMultiplier = 1.0 + Math.random() * 0.8;
       const rngBonus = Math.floor(Math.random() * 4);
       

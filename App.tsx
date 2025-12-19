@@ -9,7 +9,7 @@ import { TitleScreen } from './components/TitleScreen';
 import { SettingsPanel } from './components/SettingsPanel';
 import { HelpModal } from './components/HelpModal';
 import { Xenobot, Genome, AnalysisResult, CameraState, SimulationConfig, SaveData, CellType } from './types';
-import { DEFAULT_CONFIG, INITIAL_POPULATION_SIZE, EVOLUTION_INTERVAL } from './constants';
+import { DEFAULT_CONFIG, INITIAL_POPULATION_SIZE, EVOLUTION_INTERVAL, WORLD_WIDTH } from './constants';
 import { ScanEye, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { PhysicsEngine } from './services/physicsEngine';
 import { createRandomGenome, evolvePopulation } from './services/geneticAlgorithm';
@@ -54,11 +54,70 @@ const App: React.FC = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
 
+  // Audio Context Ref
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const oscillatorRef = useRef<OscillatorNode | null>(null);
+  const gainNodeRef = useRef<GainNode | null>(null);
+
   // Refs for loop
   const requestRef = useRef<number>(0);
   
   // Use window dimensions for full screen canvas
   const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
+
+  // --- AUDIO FX SYSTEM ---
+  useEffect(() => {
+    // Initialize Audio Context on user interaction (handled in toggleAcoustic or Start)
+    return () => {
+        if (audioContextRef.current) {
+            audioContextRef.current.close();
+        }
+    };
+  }, []);
+
+  const updateAudio = useCallback((isActive: boolean) => {
+      if (!audioContextRef.current) {
+          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+          
+          // Master Gain
+          const masterGain = audioContextRef.current.createGain();
+          masterGain.connect(audioContextRef.current.destination);
+          masterGain.gain.value = 0.1; // Low volume background
+          
+          // Drone Oscillator
+          const osc = audioContextRef.current.createOscillator();
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(50, audioContextRef.current.currentTime);
+          
+          // Filter for the drone
+          const filter = audioContextRef.current.createBiquadFilter();
+          filter.type = 'lowpass';
+          filter.frequency.value = 200;
+
+          osc.connect(filter);
+          filter.connect(masterGain);
+          osc.start();
+          
+          oscillatorRef.current = osc;
+          gainNodeRef.current = masterGain;
+      }
+
+      const ctx = audioContextRef.current;
+      const osc = oscillatorRef.current;
+      const gain = gainNodeRef.current;
+
+      if (ctx && osc && gain) {
+          if (isActive) {
+              // High Energy State (Acoustic On)
+              osc.frequency.setTargetAtTime(300, ctx.currentTime, 0.5); // Slide to 300Hz
+              gain.gain.setTargetAtTime(0.3, ctx.currentTime, 0.5); // Louder
+          } else {
+              // Low Energy State (Ambient)
+              osc.frequency.setTargetAtTime(60, ctx.currentTime, 1.0); // Slide down to 60Hz
+              gain.gain.setTargetAtTime(0.05, ctx.currentTime, 1.0); // Quieter
+          }
+      }
+  }, []);
 
   // --- Simulation Logic (Main Thread) ---
 
@@ -99,7 +158,7 @@ const App: React.FC = () => {
            const hue = match ? parseFloat(match[1]) : 0;
            const isGroupA = (hue > 150 && hue < 230);
            
-           startX = isGroupA ? 0 : 1200; 
+           startX = isGroupA ? 200 : WORLD_WIDTH - 1400; // Place away from edges
            startX += (Math.random() - 0.5) * 150; 
            g.originX = startX;
         }
@@ -131,7 +190,7 @@ const App: React.FC = () => {
         if (groupBots.length === 0) {
             // Extinction event? Reseed immediately
             const newG = createRandomGenome(generation, groupId === 0 ? 190 : 340);
-            const parentPos = groupId === 0 ? 0 : 1200;
+            const parentPos = groupId === 0 ? 200 : WORLD_WIDTH - 1400;
             const bot = engine.createBot(newG, parentPos, 200);
             engine.addBot(bot);
             return;
@@ -152,28 +211,17 @@ const App: React.FC = () => {
              engine.removeBot(victim.id);
         }
 
-        // --- STABILIZED REPRODUCTION (Exact Cloning + Offset) ---
-        // As requested: "passed directly to the child without mutation"
-        // And "initial position is slightly offset... but maintains parent's originX"
+        const parent = groupBots[0]; 
         
-        const parent = groupBots[0]; // Best bot reproduces
-        
-        // Clone the genome DIRECTLY without mutation
         const childGenome: Genome = {
             ...parent.genome,
             id: Math.random().toString(36).substr(2, 9),
             generation: generation + 1,
-            // Stabilize bioelectric memory as per request (canalization)
-            // If parent has memory, keep it, or strictly set to 0.6 if requested, 
-            // but prompt said "Suggest...". For strict cloning we keep parent values.
             bioelectricMemory: parent.genome.bioelectricMemory
         };
         
-        // Maintain the lane (Group based positioning)
         childGenome.originX = parent.genome.originX;
 
-        // Spawn logic: Slightly behind (-x) and random Y offset
-        // This ensures the clone follows the parent's "stream"
         const spawnX = parent.centerOfMass.x - 60; 
         const spawnY = parent.centerOfMass.y + (Math.random() - 0.5) * 40;
         
@@ -265,7 +313,6 @@ const App: React.FC = () => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
         keysPressed.current.add(e.key.toLowerCase());
-        // Interaction detected
         lastInputTimeRef.current = Date.now();
         isAutoCameraRef.current = false;
     };
@@ -288,6 +335,12 @@ const App: React.FC = () => {
     setCamera(getCenteredCamera(window.innerWidth, window.innerHeight, 0.55));
     setShowHelp(true); 
     setIsRunning(true);
+    
+    // Resume audio context if strictly suspended
+    if (audioContextRef.current?.state === 'suspended') {
+        audioContextRef.current.resume();
+    }
+    updateAudio(false); // Start ambient drone
   };
 
   const handleApplySettings = (newConfig: SimulationConfig) => {
@@ -306,18 +359,23 @@ const App: React.FC = () => {
     alert(`Simulation loaded: Generation ${data.generation}`);
   };
 
+  const handleQuit = () => {
+    setIsRunning(false);
+    setAppState('TITLE');
+    setShowSettings(false);
+    // Stop Audio
+    if (audioContextRef.current) {
+        audioContextRef.current.close();
+        audioContextRef.current = null;
+    }
+  };
+
   const togglePlay = () => {
       setIsRunning(!isRunning);
   };
 
   const handleMorphologyUpgrade = () => {
     if (!populationRef.current || populationRef.current.length === 0) return;
-
-    // Apply "Bilateral Polarity" Strategy
-    // Row 0: Neurons
-    // Row 5: Heart
-    // Intermediate: Skin Chassis
-    // Plasticity: 0.60
     
     const improvedPopulation = populationRef.current.map(g => {
         const newGenes = g.genes.map(row => [...row]);
@@ -378,16 +436,9 @@ const App: React.FC = () => {
               const avgX = totalX / count;
               const avgY = totalY / count;
               
-              // Target Screen Position: 
-              // avgX -> 40% Width (bias left)
-              // avgY -> 50% Height (centered)
-              
-              // Canvas Logic: ScreenX = Zoom*(WorldX - Width/2 + CamX) + Width/2
-              // Target CamX derived to place avgX at 0.4*Width:
               const targetCamX = (dimensions.width * 0.5) - avgX - (0.1 * dimensions.width) / camera.zoom;
               const targetCamY = (dimensions.height * 0.5) - avgY;
 
-              // Smooth Lerp (0.1 for better tracking response)
               const lerpFactor = 0.1;
               
               setCamera(prev => ({
@@ -458,6 +509,8 @@ const App: React.FC = () => {
   const toggleAcoustic = () => {
       const newState = !acousticActive;
       setAcousticActive(newState);
+      updateAudio(newState); // Update Audio FX
+      
       const newConfig = { ...config, acousticFreq: newState ? 300 : 0 };
       setConfig(newConfig);
       if (engineRef.current) {
@@ -582,6 +635,7 @@ const App: React.FC = () => {
                 onSave={handleApplySettings}
                 onLoad={handleLoadSave}
                 onClose={() => setShowSettings(false)}
+                onQuit={handleQuit}
                 population={getPopulationFromBots()}
                 generation={generation}
             />

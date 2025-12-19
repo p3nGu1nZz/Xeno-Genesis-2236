@@ -54,10 +54,14 @@ const App: React.FC = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
 
-  // Audio Context Ref
+  // Audio Context Ref & Nodes
   const audioContextRef = useRef<AudioContext | null>(null);
-  const oscillatorRef = useRef<OscillatorNode | null>(null);
-  const gainNodeRef = useRef<GainNode | null>(null);
+  const droneNodesRef = useRef<{
+      oscillators: OscillatorNode[],
+      gain: GainNode,
+      filter: BiquadFilterNode,
+      shimmerGain: GainNode
+  } | null>(null);
 
   // Refs for loop
   const requestRef = useRef<number>(0);
@@ -65,9 +69,8 @@ const App: React.FC = () => {
   // Use window dimensions for full screen canvas
   const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
 
-  // --- AUDIO FX SYSTEM ---
+  // --- AUDIO FX SYSTEM (Ambient Drone) ---
   useEffect(() => {
-    // Initialize Audio Context on user interaction (handled in toggleAcoustic or Start)
     return () => {
         if (audioContextRef.current) {
             audioContextRef.current.close();
@@ -78,43 +81,107 @@ const App: React.FC = () => {
   const updateAudio = useCallback((isActive: boolean) => {
       if (!audioContextRef.current) {
           audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-          
-          // Master Gain
-          const masterGain = audioContextRef.current.createGain();
-          masterGain.connect(audioContextRef.current.destination);
-          masterGain.gain.value = 0.1; // Low volume background
-          
-          // Drone Oscillator
-          const osc = audioContextRef.current.createOscillator();
-          osc.type = 'sawtooth';
-          osc.frequency.setValueAtTime(50, audioContextRef.current.currentTime);
-          
-          // Filter for the drone
-          const filter = audioContextRef.current.createBiquadFilter();
-          filter.type = 'lowpass';
-          filter.frequency.value = 200;
+          const ctx = audioContextRef.current;
 
-          osc.connect(filter);
-          filter.connect(masterGain);
-          osc.start();
+          // Master Chain: Limiter/Compressor to glue sounds
+          const masterGain = ctx.createGain();
+          masterGain.gain.value = 0.0; 
           
-          oscillatorRef.current = osc;
-          gainNodeRef.current = masterGain;
+          const compressor = ctx.createDynamicsCompressor();
+          compressor.threshold.value = -30;
+          compressor.ratio.value = 12;
+          compressor.attack.value = 0.05;
+          compressor.release.value = 0.2;
+
+          masterGain.connect(compressor);
+          compressor.connect(ctx.destination);
+
+          // 1. Deep Sub-Bass Drone (Binaural)
+          // Fundamental A1 (55Hz) + Detuned neighbor for slow beating
+          const oscBass1 = ctx.createOscillator();
+          oscBass1.type = 'sine';
+          oscBass1.frequency.value = 55; 
+          const gBass1 = ctx.createGain();
+          gBass1.gain.value = 0.4;
+          oscBass1.connect(gBass1);
+          gBass1.connect(masterGain);
+          oscBass1.start();
+
+          const oscBass2 = ctx.createOscillator();
+          oscBass2.type = 'sine';
+          oscBass2.frequency.value = 55.2; // 0.2Hz beat frequency (Very slow)
+          const gBass2 = ctx.createGain();
+          gBass2.gain.value = 0.3;
+          oscBass2.connect(gBass2);
+          gBass2.connect(masterGain);
+          oscBass2.start();
+
+          // 2. Atmospheric Pad (Filtered)
+          // A2 (110Hz) Triangle wave for texture
+          const oscPad = ctx.createOscillator();
+          oscPad.type = 'triangle';
+          oscPad.frequency.value = 110; 
+          
+          const filterPad = ctx.createBiquadFilter();
+          filterPad.type = 'lowpass';
+          filterPad.frequency.value = 150; // Starts very closed
+          filterPad.Q.value = 0.5;
+
+          // Subtle LFO modulation on Filter to simulate fluid movement
+          const lfo = ctx.createOscillator();
+          lfo.type = 'sine';
+          lfo.frequency.value = 0.08; // ~12s cycle
+          const lfoGain = ctx.createGain();
+          lfoGain.gain.value = 30; // +/- 30Hz modulation
+          lfo.connect(lfoGain);
+          lfoGain.connect(filterPad.frequency);
+          lfo.start();
+
+          const gPad = ctx.createGain();
+          gPad.gain.value = 0.15;
+          
+          oscPad.connect(filterPad);
+          filterPad.connect(gPad);
+          gPad.connect(masterGain);
+          oscPad.start();
+
+          // 3. High Harmonic "Shimmer" (Active State Indicator)
+          // E4 (329.63Hz) - Perfect Fifth harmonic 
+          const oscShimmer = ctx.createOscillator();
+          oscShimmer.type = 'sine';
+          oscShimmer.frequency.value = 329.63; 
+          const gShimmer = ctx.createGain();
+          gShimmer.gain.value = 0.0; // Start silent
+          oscShimmer.connect(gShimmer);
+          gShimmer.connect(masterGain);
+          oscShimmer.start();
+          
+          droneNodesRef.current = { 
+              oscillators: [oscBass1, oscBass2, oscPad, oscShimmer, lfo], 
+              gain: masterGain, 
+              filter: filterPad,
+              shimmerGain: gShimmer
+          };
       }
 
+      const nodes = droneNodesRef.current;
       const ctx = audioContextRef.current;
-      const osc = oscillatorRef.current;
-      const gain = gainNodeRef.current;
 
-      if (ctx && osc && gain) {
+      if (ctx && nodes) {
+          const now = ctx.currentTime;
+          
           if (isActive) {
-              // High Energy State (Acoustic On)
-              osc.frequency.setTargetAtTime(300, ctx.currentTime, 0.5); // Slide to 300Hz
-              gain.gain.setTargetAtTime(0.3, ctx.currentTime, 0.5); // Louder
+              // ACTIVE: Acoustic Stimulus (Linearizing)
+              // Open filter, increase volume, add upper harmonic
+              nodes.gain.gain.setTargetAtTime(0.35, now, 1.0);
+              nodes.filter.frequency.setTargetAtTime(500, now, 1.5); // Open filter
+              nodes.shimmerGain.gain.setTargetAtTime(0.1, now, 2.0); // Fade in shimmer
           } else {
-              // Low Energy State (Ambient)
-              osc.frequency.setTargetAtTime(60, ctx.currentTime, 1.0); // Slide down to 60Hz
-              gain.gain.setTargetAtTime(0.05, ctx.currentTime, 1.0); // Quieter
+              // INACTIVE: Ambient Background
+              // Closed filter, deep bass focus
+              nodes.gain.gain.setTargetAtTime(0.2, now, 3.0);
+              nodes.filter.frequency.setTargetAtTime(150, now, 3.0); // Close filter
+              nodes.shimmerGain.gain.setTargetAtTime(0.0, now, 1.0); // Fade out shimmer
           }
       }
   }, []);
@@ -145,25 +212,74 @@ const App: React.FC = () => {
     populationRef.current = pop;
     setGeneration(currentGen);
 
-    // Create Bots with Position Logic
+    const placedBots: {x: number, y: number, r: number}[] = [];
+    
+    // Create Bots with Collision-Free Distribution
     engine.bots = pop.map((g) => {
         let startX = 0;
+        let startY = 0;
+        const botRadius = 300; 
         
+        // Cloud Parameters - Tighter Clusters for initial spawn
+        const CLOUD_RADIUS = 350; 
+        let validPosition = false;
+        let attempts = 0;
+
         if (typeof g.originX === 'number' && !isNaN(g.originX)) {
-             startX = g.originX + (Math.random() - 0.5) * 50; 
+             // Offspring logic: Try to stay near parent
+             while (!validPosition && attempts < 20) {
+                 startX = g.originX + (Math.random() - 0.5) * 150;
+                 startY = 600 + (Math.random() - 0.5) * 200;
+                 
+                 const collision = placedBots.some(p => {
+                     const dx = p.x - startX;
+                     const dy = p.y - startY;
+                     return (dx*dx + dy*dy) < (botRadius + p.r) ** 2;
+                 });
+                 
+                 if (!collision) validPosition = true;
+                 attempts++;
+             }
         } 
         else {
-           // Fallback / First Gen
+           // New Spawn Logic
            const match = g.color.match(/hsl\((\d+\.?\d*)/);
            const hue = match ? parseFloat(match[1]) : 0;
            const isGroupA = (hue > 150 && hue < 230);
            
-           startX = isGroupA ? 200 : WORLD_WIDTH - 1400; // Place away from edges
-           startX += (Math.random() - 0.5) * 150; 
-           g.originX = startX;
+           // Start with two groups clustered together, separated by a small distance.
+           // World Center approx 6000.
+           const worldCenter = WORLD_WIDTH / 2;
+           // Tighter clustering: +/- 300 instead of 400
+           const centerBase = isGroupA ? worldCenter - 300 : worldCenter + 300; 
+           
+           while (!validPosition && attempts < 50) {
+               const angle = Math.random() * Math.PI * 2;
+               const dist = Math.sqrt(Math.random()) * CLOUD_RADIUS;
+               
+               startX = centerBase + Math.cos(angle) * dist;
+               startY = 800 + Math.sin(angle) * (dist * 0.7); 
+
+               // Check collision
+               const collision = placedBots.some(p => {
+                   const dx = p.x - startX;
+                   const dy = p.y - startY;
+                   return (dx*dx + dy*dy) < (botRadius + p.r) ** 2;
+               });
+               
+               if (!collision) validPosition = true;
+               attempts++;
+           }
+        }
+        
+        if (!validPosition) {
+            startX += (Math.random() - 0.5) * 500;
+            startY += (Math.random() - 0.5) * 500;
         }
 
-        const startY = 200 + Math.random() * 100; 
+        placedBots.push({x: startX, y: startY, r: botRadius});
+        g.originX = startX;
+
         return engine.createBot(g, startX, startY);
     });
     
@@ -190,8 +306,8 @@ const App: React.FC = () => {
         if (groupBots.length === 0) {
             // Extinction event? Reseed immediately
             const newG = createRandomGenome(generation, groupId === 0 ? 190 : 340);
-            const parentPos = groupId === 0 ? 200 : WORLD_WIDTH - 1400;
-            const bot = engine.createBot(newG, parentPos, 200);
+            const parentPos = groupId === 0 ? WORLD_WIDTH/2 - 400 : WORLD_WIDTH/2 + 400;
+            const bot = engine.createBot(newG, parentPos, 800);
             engine.addBot(bot);
             return;
         }
@@ -222,8 +338,9 @@ const App: React.FC = () => {
         
         childGenome.originX = parent.genome.originX;
 
-        const spawnX = parent.centerOfMass.x - 60; 
-        const spawnY = parent.centerOfMass.y + (Math.random() - 0.5) * 40;
+        // Spawn child in the cloud of the parent
+        const spawnX = parent.centerOfMass.x - 80 + (Math.random() - 0.5) * 40; 
+        const spawnY = parent.centerOfMass.y + (Math.random() - 0.5) * 80;
         
         const childBot = engine.createBot(childGenome, spawnX, spawnY);
         engine.addBot(childBot);
@@ -288,8 +405,9 @@ const App: React.FC = () => {
   };
 
   const getCenteredCamera = (width: number, height: number, zoom: number = 0.55) => {
-    const targetX = 600;
-    const targetY = 600; 
+    // Initial centering on the clustered groups
+    const targetX = WORLD_WIDTH / 2; 
+    const targetY = 800; 
     return {
         x: width / 2 - targetX,
         y: height / 2 - targetY,
@@ -333,14 +451,21 @@ const App: React.FC = () => {
     // Ensure we start fresh
     initSimulation(config, [], 1);
     setCamera(getCenteredCamera(window.innerWidth, window.innerHeight, 0.55));
+    
+    // IMPORTANT: Start paused, wait for user to click Start in HelpModal
     setShowHelp(true); 
-    setIsRunning(true);
+    setIsRunning(false); 
     
     // Resume audio context if strictly suspended
     if (audioContextRef.current?.state === 'suspended') {
         audioContextRef.current.resume();
     }
     updateAudio(false); // Start ambient drone
+  };
+
+  const handleStartSim = () => {
+      setIsRunning(true);
+      setShowHelp(false);
   };
 
   const handleApplySettings = (newConfig: SimulationConfig) => {
@@ -436,10 +561,20 @@ const App: React.FC = () => {
               const avgX = totalX / count;
               const avgY = totalY / count;
               
-              const targetCamX = (dimensions.width * 0.5) - avgX - (0.1 * dimensions.width) / camera.zoom;
-              const targetCamY = (dimensions.height * 0.5) - avgY;
+              // LEFT 40% RULE:
+              // We want avgX (World) to be positioned at roughly 40% of the screen width from the left.
+              // Canvas Logic: ScreenX = (WorldX - W/2 + CamX) * Zoom + W/2
+              // TargetScreenX = 0.4 * W
+              // CamX = (TargetScreenX - W/2) / Zoom + W/2 - WorldX
+              
+              const targetScreenX = dimensions.width * 0.4;
+              const targetScreenY = dimensions.height * 0.5; // Center Vertically
 
-              const lerpFactor = 0.1;
+              const targetCamX = (targetScreenX - dimensions.width / 2) / camera.zoom + dimensions.width / 2 - avgX;
+              const targetCamY = (targetScreenY - dimensions.height / 2) / camera.zoom + dimensions.height / 2 - avgY;
+
+              // Smooth Lerp (0.12 for faster but smooth tracking to prevent floating off screen)
+              const lerpFactor = 0.12;
               
               setCamera(prev => ({
                   x: prev.x + (targetCamX - prev.x) * lerpFactor,
@@ -447,199 +582,180 @@ const App: React.FC = () => {
                   zoom: prev.zoom
               }));
           }
-      }
+      } else {
+          // Manual Camera Logic
+          setCamera(prev => {
+              if (isAutoCameraRef.current) return prev; 
+              
+              const speed = 15 / prev.zoom;
+              let dx = 0;
+              let dy = 0;
+              let dZoom = 0;
 
-      // Manual Controls override
-      const speed = 10 / camera.zoom;
-      const keys = keysPressed.current;
-      let dx = 0;
-      let dy = 0;
-      let dZoom = 0;
+              // WASD + Arrow Keys
+              if (keysPressed.current.has('w') || keysPressed.current.has('arrowup')) dy += speed;
+              if (keysPressed.current.has('s') || keysPressed.current.has('arrowdown')) dy -= speed;
+              if (keysPressed.current.has('a') || keysPressed.current.has('arrowleft')) dx += speed;
+              if (keysPressed.current.has('d') || keysPressed.current.has('arrowright')) dx -= speed;
+              
+              // Q/E + -/= for Zoom
+              if (keysPressed.current.has('q') || keysPressed.current.has('-')) dZoom -= 0.01;
+              if (keysPressed.current.has('e') || keysPressed.current.has('=')) dZoom += 0.01;
 
-      if (keys.has('w') || keys.has('arrowup')) dy += speed;
-      if (keys.has('s') || keys.has('arrowdown')) dy -= speed;
-      if (keys.has('a') || keys.has('arrowleft')) dx += speed;
-      if (keys.has('d') || keys.has('arrowright')) dx -= speed;
-      if (keys.has('q') || keys.has('-')) dZoom -= 0.02;
-      if (keys.has('e') || keys.has('=')) dZoom += 0.02;
+              if (dx === 0 && dy === 0 && dZoom === 0) return prev;
 
-      if (dx !== 0 || dy !== 0 || dZoom !== 0) {
-          setCamera(prev => ({
-              x: prev.x + dx,
-              y: prev.y + dy,
-              zoom: Math.max(0.1, Math.min(3, prev.zoom + dZoom))
-          }));
+              return {
+                   x: prev.x + dx,
+                   y: prev.y + dy,
+                   zoom: Math.max(0.1, Math.min(2.0, prev.zoom + dZoom))
+              };
+          });
       }
   };
 
-  const animate = useCallback(() => {
-    updateCamera();
-    
+  const loop = useCallback(() => {
     if (isRunning) {
         updateSimulation();
     }
-
-    requestRef.current = requestAnimationFrame(animate);
-  }, [camera, isRunning, updateSimulation]);
-
+    updateCamera();
+    requestRef.current = requestAnimationFrame(loop);
+  }, [isRunning, updateSimulation]); 
+  
   useEffect(() => {
-    requestRef.current = requestAnimationFrame(animate);
-    return () => {
-      if (requestRef.current) cancelAnimationFrame(requestRef.current);
-    };
-  }, [animate]);
-
-  // --- Interactions ---
-
-  const handleAnalyze = async () => {
-    const target = bestGenomeA || bestGenomeB;
-    if (!target) return;
-    setIsAnalyzing(true);
-    const result = await analyzeXenobot(target, generation);
-    setAnalysisResult(result);
-    setIsAnalyzing(false);
-  };
+    requestRef.current = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(requestRef.current);
+  }, [loop]);
 
   const resetCamera = () => {
-      setCamera(getCenteredCamera(window.innerWidth, window.innerHeight, 0.55));
-      isAutoCameraRef.current = false;
-      lastInputTimeRef.current = Date.now();
+    setCamera(getCenteredCamera(window.innerWidth, window.innerHeight, 0.55));
+    isAutoCameraRef.current = false;
+    lastInputTimeRef.current = Date.now();
   };
-  
-  const toggleAcoustic = () => {
-      const newState = !acousticActive;
-      setAcousticActive(newState);
-      updateAudio(newState); // Update Audio FX
-      
-      const newConfig = { ...config, acousticFreq: newState ? 300 : 0 };
-      setConfig(newConfig);
-      if (engineRef.current) {
-          engineRef.current.config = newConfig;
-      }
-  };
-
-  // --- Render ---
-
-  if (appState === 'TITLE') {
-      return <TitleScreen onStart={startNewSimulation} />;
-  }
 
   return (
-    <div className="relative w-screen h-screen bg-deep-space text-white overflow-hidden font-mono selection:bg-neon-cyan selection:text-black">
+    <div className="relative w-full h-full bg-slate-950 overflow-hidden font-sans select-none text-white">
+      {appState === 'TITLE' && <TitleScreen onStart={startNewSimulation} />}
       
-      {/* BACKGROUND: Full Screen Simulation Canvas */}
-      <SimulationCanvas 
-        botsRef={botsRef} 
-        width={dimensions.width} 
-        height={dimensions.height}
-        groundY={config.groundHeight} 
-        camera={camera}
-      />
-      
-      {/* BACKGROUND: Grid Pattern Overlay */}
-      <div className="absolute inset-0 pointer-events-none opacity-10" 
-             style={{
-               backgroundImage: `radial-gradient(circle at 50% 50%, #00f3ff 1px, transparent 1px)`,
-               backgroundSize: '40px 40px'
-             }}>
-      </div>
+      {appState === 'SIMULATION' && (
+          <>
+             <SimulationCanvas 
+                 botsRef={botsRef}
+                 width={dimensions.width}
+                 height={dimensions.height}
+                 groundY={config.groundHeight}
+                 camera={camera}
+             />
+             
+             {/* Top Right HUD Area */}
+             <div className="absolute top-0 right-0 w-full p-4 pointer-events-none flex justify-end items-start z-20">
+                {/* Physics Stats */}
+                <div className={`absolute top-4 ${isSidebarCollapsed ? 'left-20' : 'left-80'} ml-6 transition-all duration-500 bg-slate-900/50 backdrop-blur border border-slate-700 p-2 rounded text-xs text-slate-400`}>
+                    <div>PHYSICS_ENGINE: MAIN_THREAD_OPTIMIZED</div>
+                    <div>GRAVITY: {config.gravity.toFixed(2)} m/s²</div>
+                    <div>POPULATION: {populationRef.current.length} / {config.maxPopulationSize}</div>
+                    <div>TICK: {globalTick}</div>
+                    <div className={acousticActive ? "text-neon-magenta animate-pulse" : "text-slate-500"}>
+                        STIMULUS: {acousticActive ? '300 Hz (LINEARIZING)' : 'NONE (ROTATIONAL)'}
+                    </div>
+                </div>
 
-      {/* UI LAYER: Controls Sidebar (Collapsible) */}
-      <div className="absolute top-0 left-0 h-full z-30 pointer-events-none">
-        <div className="pointer-events-auto h-full flex">
-            <Controls 
-                isRunning={isRunning} 
+                <div className="flex gap-2 pointer-events-auto mt-2 mr-2">
+                    <button 
+                        onClick={resetCamera}
+                        className="bg-slate-800 hover:bg-slate-700 text-neon-cyan border border-slate-600 px-3 py-1 rounded text-xs flex items-center gap-2 transition-colors shadow-lg"
+                    >
+                        <ScanEye size={14} /> RESET CAM
+                    </button>
+                </div>
+            </div>
+
+            {/* Bottom Left Instructions */}
+            <div className={`absolute bottom-6 ${isSidebarCollapsed ? 'left-20' : 'left-80'} ml-6 pointer-events-none text-[10px] text-slate-500 font-mono z-20 transition-all duration-500`}>
+                <div>[WASD / ARROWS] PAN CAMERA (AUTO-FOLLOW ACTIVE)</div>
+                <div>[Q / E / - / =] ZOOM LEVEL</div>
+                <div className="text-neon-cyan mt-1">[MOUSE HOVER] INSPECT CELLULAR NODE</div>
+            </div>
+             
+             <Controls 
+                isRunning={isRunning}
                 generation={generation}
-                timeRemaining={0} 
+                timeRemaining={0}
                 onTogglePlay={togglePlay}
-                onAnalyze={handleAnalyze}
-                onOpenSettings={() => {
-                    setIsRunning(false);
-                    setShowSettings(true);
+                onAnalyze={async () => {
+                     setIsAnalyzing(true);
+                     const target = bestGenomeA || (populationRef.current.length > 0 ? populationRef.current[0] : null);
+                     if (target) {
+                         const res = await analyzeXenobot(target, generation);
+                         setAnalysisResult(res);
+                     }
+                     setIsAnalyzing(false);
                 }}
+                onOpenSettings={() => setShowSettings(true)}
                 isAnalyzing={isAnalyzing}
-                onToggleAcoustic={toggleAcoustic}
+                onToggleAcoustic={() => {
+                    const active = !acousticActive;
+                    setAcousticActive(active);
+                    if (engineRef.current) {
+                        engineRef.current.config.acousticFreq = active ? 300 : 0;
+                    }
+                    updateAudio(active);
+                }}
                 acousticActive={acousticActive}
                 isCollapsed={isSidebarCollapsed}
                 onToggleCollapse={() => setSidebarCollapsed(!isSidebarCollapsed)}
                 minimizedPanels={minimizedPanels}
-                onRestorePanel={(id) => setMinimizedPanels(prev => ({ ...prev, [id]: false }))}
+                onRestorePanel={(id) => setMinimizedPanels(prev => ({...prev, [id]: false}))}
                 genomeA={bestGenomeA}
                 genomeB={bestGenomeB}
-            />
-        </div>
-      </div>
-      
-      {/* UI LAYER: Top HUD */}
-      <div className="absolute top-0 right-0 w-full p-4 pointer-events-none flex justify-end items-start z-20">
-            {/* Physics Stats (Positioned away from Reset Button) */}
-            <div className={`absolute top-4 ${isSidebarCollapsed ? 'left-20' : 'left-80'} ml-6 transition-all duration-500 bg-slate-900/50 backdrop-blur border border-slate-700 p-2 rounded text-xs text-slate-400`}>
-                <div>PHYSICS_ENGINE: MAIN_THREAD_OPTIMIZED</div>
-                <div>GRAVITY: {config.gravity.toFixed(2)} m/s²</div>
-                <div>POPULATION: {populationRef.current.length} / {config.maxPopulationSize}</div>
-                <div>TICK: {globalTick}</div>
-                <div className={acousticActive ? "text-neon-magenta animate-pulse" : "text-slate-500"}>
-                    STIMULUS: {acousticActive ? '300 Hz (LINEARIZING)' : 'NONE (ROTATIONAL)'}
-                </div>
-            </div>
-            
-             <div className="flex gap-2 pointer-events-auto mt-2 mr-2">
-                 <button 
-                    onClick={resetCamera}
-                    className="bg-slate-800 hover:bg-slate-700 text-neon-cyan border border-slate-600 px-3 py-1 rounded text-xs flex items-center gap-2 transition-colors shadow-lg"
-                 >
-                    <ScanEye size={14} /> RESET CAM
-                 </button>
-             </div>
-      </div>
-        
-      {/* UI LAYER: Bottom Instructions */}
-      <div className={`absolute bottom-6 ${isSidebarCollapsed ? 'left-20' : 'left-80'} ml-6 pointer-events-none text-[10px] text-slate-500 font-mono z-20 transition-all duration-500`}>
-            <div>[WASD / ARROWS] PAN CAMERA (AUTO-FOLLOW ACTIVE)</div>
-            <div>[Q / E] ZOOM LEVEL</div>
-      </div>
+             />
 
-      {/* FLOATING PANELS: Draggable Genome Visualizers */}
-      <GenomeVisualizer 
-        genome={bestGenomeA} 
-        label="GROUP A (NATIVES)" 
-        borderColor="border-neon-cyan/50" 
-        initialPosition={{ x: 400, y: window.innerHeight - 300 }}
-        hidden={minimizedPanels.A}
-        onMinimize={() => setMinimizedPanels(prev => ({ ...prev, A: true }))}
-      />
-      
-      <GenomeVisualizer 
-        genome={bestGenomeB} 
-        label="GROUP B (INVADERS)" 
-        borderColor="border-neon-magenta/50" 
-        initialPosition={{ x: window.innerWidth - 300, y: window.innerHeight - 300 }}
-        hidden={minimizedPanels.B}
-        onMinimize={() => setMinimizedPanels(prev => ({ ...prev, B: true }))}
-      />
-      
-      <AnalysisPanel 
-        result={analysisResult} 
-        onClose={() => setAnalysisResult(null)}
-        onApplyUpgrade={handleMorphologyUpgrade}
-      />
+             {bestGenomeA && (
+                 <GenomeVisualizer 
+                     genome={bestGenomeA}
+                     label="GROUP A (CYAN) // LEADER"
+                     borderColor="border-neon-cyan/50"
+                     initialPosition={{ x: 340, y: 20 }}
+                     hidden={minimizedPanels.A}
+                     onMinimize={() => setMinimizedPanels(prev => ({...prev, A: true}))}
+                 />
+             )}
 
-      <HelpModal 
-        open={showHelp} 
-        onClose={() => setShowHelp(false)} 
-      />
+             {bestGenomeB && (
+                 <GenomeVisualizer 
+                     genome={bestGenomeB}
+                     label="GROUP B (MAGENTA) // LEADER"
+                     borderColor="border-neon-magenta/50"
+                     initialPosition={{ x: 340, y: 300 }}
+                     hidden={minimizedPanels.B}
+                     onMinimize={() => setMinimizedPanels(prev => ({...prev, B: true}))}
+                 />
+             )}
 
-      {showSettings && (
-            <SettingsPanel 
-                config={config} 
-                onSave={handleApplySettings}
-                onLoad={handleLoadSave}
-                onClose={() => setShowSettings(false)}
-                onQuit={handleQuit}
-                population={getPopulationFromBots()}
-                generation={generation}
-            />
-        )}
+             <AnalysisPanel 
+                 result={analysisResult} 
+                 onClose={() => setAnalysisResult(null)}
+                 onApplyUpgrade={handleMorphologyUpgrade} 
+             />
+
+             <HelpModal 
+                 open={showHelp} 
+                 onClose={handleStartSim} 
+                 onStart={handleStartSim} 
+             />
+
+             {showSettings && (
+                 <SettingsPanel 
+                     config={config}
+                     onSave={handleApplySettings}
+                     onLoad={handleLoadSave}
+                     onClose={() => setShowSettings(false)}
+                     onQuit={handleQuit}
+                     population={getPopulationFromBots()}
+                     generation={generation}
+                 />
+             )}
+          </>
+      )}
     </div>
   );
 };

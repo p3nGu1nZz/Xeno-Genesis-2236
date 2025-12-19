@@ -33,8 +33,13 @@ export class PhysicsEngine {
     for (let y = 0; y < gridSize; y++) {
       for (let x = 0; x < gridSize; x++) {
         if (genes[y][x] !== CellType.EMPTY) {
-          const px = startX + x * scale;
-          const py = startY + y * scale;
+          // Add significant randomization (Jitter) to initial particle position 
+          // to completely break the visual lattice and look more like organic tissue
+          const jitterX = (Math.random() - 0.5) * (scale * 0.5); 
+          const jitterY = (Math.random() - 0.5) * (scale * 0.5);
+
+          const px = startX + x * scale + jitterX;
+          const py = startY + y * scale + jitterY;
           particleMap[y][x] = particles.length;
           particles.push({
             pos: { x: px, y: py },
@@ -76,11 +81,10 @@ export class PhysicsEngine {
                 const stiffness = isNeuron ? 0.8 : 0.3;
 
                 // Propulsion Logic:
-                // For Bilateral Polarity (Heart at Posterior/Bottom, Neuron at Anterior/Top),
-                // we want a propulsion vector that drives the bot forward.
-                // A phase offset based on Y creates a metachronal wave along the body length.
-                // phaseOffset = y * 0.5 creates a wave traveling top-to-bottom.
-                const phaseOffset = y * 0.5;
+                // We use a phase based on grid index to create a traveling wave.
+                // dx acts as a spatial index (anterior to posterior wave).
+                // This ensures neighbor synchronization naturally.
+                const phaseOffset = x * 0.5 + y * 0.1;
 
                 springs.push({
                     p1: p1Idx,
@@ -148,12 +152,17 @@ export class PhysicsEngine {
       this.updateBot(bot, time, dt, dtSq, fluidBaseFriction);
     }
     
-    // Apply smoothing at the end of the physics step
+    // Apply smoothing at the end of the physics step to reduce jitter
     this.smoothRenderPositions();
   }
   
   smoothRenderPositions() {
-    const smoothing = Math.max(0.01, Math.min(1.0, this.config.syncRate || 0.2));
+    // Tuned Smoothing Factor (Linear Interpolation)
+    // 0.25 provides a snappy but smooth visual response.
+    // Lower values (0.1) are smoother but "floaty/laggy".
+    // Higher values (0.5+) show more physics jitter.
+    const smoothing = 0.25; 
+    const snapThreshold = 0.01; // Snap if very close to avoid micro-drifting
     
     const botCount = this.bots.length;
     for (let i = 0; i < botCount; i++) {
@@ -165,9 +174,22 @@ export class PhysicsEngine {
         
         for (let j = 0; j < pCount; j++) {
             const p = particles[j];
-            // Linear Interpolation (Lerp) to smooth out high-frequency physics jitter
-            p.renderPos.x = this.lerp(p.renderPos.x, p.pos.x, smoothing);
-            p.renderPos.y = this.lerp(p.renderPos.y, p.pos.y, smoothing);
+            
+            // Lerp X
+            const dx = p.pos.x - p.renderPos.x;
+            if (Math.abs(dx) < snapThreshold) {
+                p.renderPos.x = p.pos.x;
+            } else {
+                p.renderPos.x += dx * smoothing;
+            }
+
+            // Lerp Y
+            const dy = p.pos.y - p.renderPos.y;
+            if (Math.abs(dy) < snapThreshold) {
+                p.renderPos.y = p.pos.y;
+            } else {
+                p.renderPos.y += dy * smoothing;
+            }
         }
     }
   }
@@ -228,10 +250,6 @@ export class PhysicsEngine {
       }
   }
 
-  private lerp(start: number, end: number, t: number): number {
-    return start * (1 - t) + end * t;
-  }
-
   private updateBot(bot: Xenobot, time: number, dt: number, dtSq: number, fluidBaseFriction: number) {
     let activeCharge = 0;
     const gravity = this.config.gravity;
@@ -281,53 +299,63 @@ export class PhysicsEngine {
       const currentFlow = Math.sin(time * 0.5 + depthRatio * 4.0) * currentStrength;
       p.force.x += currentFlow;
       
-      // Brownian Noise
-      p.force.x += (Math.random() - 0.5) * 0.5;
-      p.force.y += (Math.random() - 0.5) * 0.5;
+      // Brownian Noise (Reduced)
+      p.force.x += (Math.random() - 0.5) * 0.2;
+      p.force.y += (Math.random() - 0.5) * 0.2;
 
       // --- WORLD BOUNDARY REPULSION (Avoid Edges) ---
-      // Push bot away if it gets too close to the left (0) or right (WORLD_WIDTH) edge
       if (p.pos.x < EDGE_BUFFER) {
-          const push = (EDGE_BUFFER - p.pos.x) * 0.005; // Gentle push
+          const push = (EDGE_BUFFER - p.pos.x) * 0.005; 
           p.force.x += push;
       } else if (p.pos.x > WORLD_WIDTH - EDGE_BUFFER) {
           const push = (p.pos.x - (WORLD_WIDTH - EDGE_BUFFER)) * 0.005;
           p.force.x -= push;
       }
 
-      // --- CILIARY PROPULSION (Basal Motility) ---
+      // --- CILIARY PROPULSION (Refined Peristaltic Wave) ---
+      // We implement a coordinated traveling wave along the body length.
+      // Direction: Head (Right) -> Tail (Left) to generate Forward (Right) thrust.
+      
       const dx = p.pos.x - bot.centerOfMass.x;
-
+      const dy = p.pos.y - bot.centerOfMass.y;
+      
       if (acousticActive) {
-          p.force.x += CILIA_FORCE; 
+          // Linearizing stimulus forces all cilia to beat in unison forward
+          p.force.x += CILIA_FORCE * 1.5; 
       } else {
-          // Peristaltic Wave Motion
-          const waveFreq = 3.0 + (memory * 2.0); 
-          const phase = (dx * 0.05) - (time * waveFreq * Math.PI * 2);
-          const beat = Math.sin(phase);
+          // Wave Parameters
+          // Frequency scales with bioelectric memory (plasticity).
+          const freq = 3.0 + (memory * 3.0); 
+          const k = 0.04; // Wave number
+
+          // Phase: travel left (against motion)
+          // phase = k*x + w*t
+          const phase = (dx * k) + (time * freq);
           
-          let thrustX = 0;
-          let liftY = 0;
+          // Bioelectric Amplitude Modulation
+          // Use charge to synchronize and amplify stroke.
+          // Experimental: Stronger correlation to charge (0.5 base + 2.5 multiplier)
+          const intensity = 0.5 + p.charge * 2.5;
+
+          // Raised Sine Drive (0.0 to 1.0) -> Always pushing forward
+          // This ensures continuous forward thrust (no drag phase) for smooth "gliding".
+          const drive = (Math.sin(phase) + 1.0) * 0.5;
           
-          if (beat > 0) {
-             thrustX = CILIA_FORCE * 1.5 * beat;
-             liftY = CILIA_FORCE * 0.2 * beat;
-          } else {
-             thrustX = CILIA_FORCE * 0.3 * beat; 
-             liftY = CILIA_FORCE * 1.0 * beat;   
-          }
-          
-          if (memory < 0.8) {
-              const noiseScale = (0.8 - memory);
-              thrustX += (Math.random() - 0.5) * noiseScale * CILIA_FORCE;
-              liftY += (Math.random() - 0.5) * noiseScale * CILIA_FORCE;
-          }
-          
-          p.force.x += thrustX;
-          p.force.y += liftY;
+          // Apply Thrust (Propulsion)
+          p.force.x += CILIA_FORCE * intensity * drive;
+
+          // Stabilizing Undulation (Vertical)
+          // Creates a natural swimming motion but damps rotation.
+          const undulation = Math.cos(phase) * 0.15;
+          p.force.y += CILIA_FORCE * intensity * undulation;
+
+          // Streamlining (Anti-Tumble)
+          // Particles above CoM push down, below push up -> flattens bot to stream
+          // effectively counteracting rotational torque.
+          p.force.y -= dy * 0.01; 
       }
 
-      // Self-Assembly
+      // Self-Assembly (Cohesion)
       const dxSelf = bot.centerOfMass.x - p.pos.x;
       const dySelf = bot.centerOfMass.y - p.pos.y;
       p.force.x += dxSelf * SURFACE_TENSION;
@@ -357,6 +385,9 @@ export class PhysicsEngine {
 
         const avgCharge = (p1.charge + p2.charge) * 0.5;
         const freqMod = 1.0 + avgCharge * 4.0; 
+        
+        // Coordinated muscle contraction using the pre-calculated phaseOffset
+        // phaseOffset is now derived from grid position in createBot
         const contraction = Math.sin(time * mSpeed * freqMod + (s.phaseOffset || 0));
         targetLen = s.currentRestLength * (1 + contraction * mStrength);
       }

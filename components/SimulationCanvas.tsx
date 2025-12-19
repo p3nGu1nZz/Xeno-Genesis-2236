@@ -1,5 +1,6 @@
-import React, { useRef, useEffect, useLayoutEffect } from 'react';
-import { Xenobot, CameraState } from '../types';
+
+import React, { useRef, useEffect, useLayoutEffect, useState } from 'react';
+import { Xenobot, CameraState, CellType } from '../types';
 import { COLORS } from '../constants';
 
 const MAX_PARTICLES = 128; 
@@ -64,15 +65,14 @@ const FS_SOURCE = `
         
         if (charge > 0.01) {
             // Pulse Logic based on Memory
-            // High Memory (1.0) -> Frequency 2.0, Depth 0.0 -> Stable Glow
-            // Low Memory (0.0) -> Frequency 10.0, Depth 0.4 -> Rapid Flicker
             float pulseFrequency = 2.0 + (1.0 - memory) * 8.0; 
             float pulseDepth = (1.0 - memory) * 0.4; 
             float pulse = 1.0 - pulseDepth * (0.5 + 0.5 * sin(u_time * pulseFrequency));
             
-            // Intensity Logic
+            // Reduced Intensity for clearer visuals
+            // Multiplier reduced from 0.003 to 0.0015 to prevent blooming
             float intensity = charge * pulse * (0.8 + 0.2 * memory);
-            float contrib = (intensity * 0.003) / (dist * dist + 0.00005);
+            float contrib = (intensity * 0.0015) / (dist * dist + 0.00005);
             
             field += contrib;
             weightedMemory += memory * contrib;
@@ -84,40 +84,44 @@ const FS_SOURCE = `
         avgMemory = weightedMemory / field;
     }
     
+    // Flow Maps driven by charge (field strength)
+    // Higher field = faster flow and more distortion, representing cognitive activity
+    float flowSpeed = 1.5 + field * 20.0; 
     vec2 flowOffset = vec2(
-        cos(u_time * 1.5 + field * 15.0),
-        sin(u_time * 2.0 + field * 10.0)
-    ) * field * 0.15; 
+        cos(u_time * 0.5 + field * 10.0),
+        sin(u_time * 0.8 + field * 8.0)
+    ) * field * 0.2; // Increased distortion scale slightly
 
     vec2 worldUV = (gl_FragCoord.xy / u_zoom) - u_offset + flowOffset;
-    float n = fbm(worldUV * 0.002 + vec2(u_time * 0.1, u_time * 0.05));
-    float flow = field * (0.5 + 0.5 * n);
+    
+    // FBM Noise for flow texture
+    float n = fbm(worldUV * 0.002 + vec2(u_time * 0.05, u_time * 0.1));
+    
+    // Mix field with noise, keeping background subtle
+    float flow = field * (0.4 + 0.6 * n); 
     
     vec4 color = vec4(0.0);
-    if (flow > 0.05) {
+    if (flow > 0.02) { 
        // Visualizing Memory via Color
-       // Low Memory -> Violet/Purple (Unstable)
-       vec3 cLow = vec3(0.6, 0.0, 0.9);
-       // High Memory -> Cyan/Teal (Stable)
-       vec3 cHigh = vec3(0.0, 1.0, 0.9);
+       vec3 cLow = vec3(0.5, 0.0, 0.8); // Darker violet
+       vec3 cHigh = vec3(0.0, 0.8, 0.7); // Darker cyan
        
        vec3 baseColor = mix(cLow, cHigh, smoothstep(0.2, 0.8, avgMemory));
        
-       vec3 cDark = baseColor * 0.2;
-       vec3 cMid = baseColor;
-       vec3 cBright = vec3(0.9, 1.0, 1.0); 
+       vec3 cBright = vec3(0.8, 0.9, 1.0); 
 
-       float t = smoothstep(0.05, 1.0, flow);
-       vec3 rgb = mix(cDark, cMid, smoothstep(0.0, 0.5, t));
-       rgb = mix(rgb, cBright, smoothstep(0.5, 1.0, t));
+       float t = smoothstep(0.05, 0.8, flow);
+       vec3 rgb = mix(baseColor * 0.5, baseColor, smoothstep(0.0, 0.6, t));
+       rgb = mix(rgb, cBright, smoothstep(0.6, 1.0, t));
        
        // Extra "Electric" jitter for low memory
        if (avgMemory < 0.3) {
-           rgb += (hash(uv * u_time) * 0.1) * (1.0 - t);
+           rgb += (hash(uv * u_time) * 0.05) * (1.0 - t);
        }
        
-       float alpha = smoothstep(0.02, 0.2, flow);
-       color = vec4(rgb * alpha, alpha * 0.85);
+       // Reduced alpha max to keep it atmospheric and transparent
+       float alpha = smoothstep(0.02, 0.5, flow) * 0.4; 
+       color = vec4(rgb * alpha, alpha);
     }
     gl_FragColor = color;
   }
@@ -143,6 +147,31 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, width, hei
   const particleBufferRef = useRef<Float32Array>(new Float32Array(MAX_PARTICLES * 4));
   const candidateIndicesRef = useRef<Int32Array>(new Int32Array(1000));
   const candidateChargesRef = useRef<Float32Array>(new Float32Array(1000));
+
+  // Mouse Tracking for Tooltip
+  const mouseRef = useRef({ x: 0, y: 0 });
+  const [hoverData, setHoverData] = useState<{ 
+      x: number, 
+      y: number, 
+      type: CellType, 
+      charge: number, 
+      botId: string,
+      memory: number 
+  } | null>(null);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+        const rect = canvas2dRef.current?.getBoundingClientRect();
+        if (rect) {
+            mouseRef.current = {
+                x: e.clientX - rect.left,
+                y: e.clientY - rect.top
+            };
+        }
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => window.removeEventListener('mousemove', handleMouseMove);
+  }, []);
 
   // --- WebGL Setup ---
   useEffect(() => {
@@ -201,6 +230,15 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, width, hei
       ctx.translate(width/2, height/2); 
       ctx.scale(camera.zoom, camera.zoom);
       ctx.translate(-width/2 + camera.x, -height/2 + camera.y);
+
+      // Mouse detection logic (Convert Screen Mouse -> World Mouse)
+      const mouseX = mouseRef.current.x;
+      const mouseY = mouseRef.current.y;
+      
+      const worldMouseX = (mouseX - width/2) / camera.zoom - camera.x + width/2;
+      const worldMouseY = (mouseY - height/2) / camera.zoom - camera.y + height/2;
+
+      let foundHover: any = null;
 
       // Environment
       const gradient = ctx.createLinearGradient(0, -2000, 0, 4000);
@@ -280,6 +318,7 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, width, hei
             }
         }
 
+        // Particle Loop + Hit Test
         for (let j = 0; j < pCount; j++) {
             const p = particles[j];
             
@@ -302,9 +341,73 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, width, hei
                 ctx.fill();
                 ctx.shadowBlur = 0;
             }
+
+            // Hit Test for Tooltip
+            if (!foundHover) {
+                const dx = p.renderPos.x - worldMouseX;
+                const dy = p.renderPos.y - worldMouseY;
+                if (dx*dx + dy*dy < 100) { // 10px radius
+                    // Determine Cell Type roughly by row or if it has muscle springs
+                    // Simplifying by just passing generic data or retrieving actual gene if needed
+                    const geneX = j % bot.genome.gridSize;
+                    const geneY = Math.floor(j / bot.genome.gridSize);
+                    const type = bot.genome.genes[geneY]?.[geneX] || CellType.SKIN;
+                    
+                    foundHover = {
+                        x: mouseX,
+                        y: mouseY,
+                        type,
+                        charge: p.charge,
+                        botId: bot.id.substring(0, 4),
+                        memory: bot.genome.bioelectricMemory
+                    };
+                }
+            }
         }
       }
       ctx.restore();
+
+      // Tooltip State Sync (only update if changed to avoid thrashing)
+      // Note: Updating state inside render loop is dangerous. 
+      // We will only do it if the hover state actually changed visibly.
+      // Or we can just render the tooltip immediately on the canvas to be faster.
+      
+      // Let's render tooltip on Canvas to avoid React overhead
+      if (foundHover) {
+          ctx.save();
+          const tx = foundHover.x + 15;
+          const ty = foundHover.y + 15;
+          
+          // Tooltip Background
+          ctx.fillStyle = 'rgba(5, 11, 20, 0.9)';
+          ctx.strokeStyle = '#00f3ff';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.roundRect(tx, ty, 160, 90, 8);
+          ctx.fill();
+          ctx.stroke();
+
+          // Text
+          ctx.font = 'bold 12px Orbitron, sans-serif';
+          ctx.fillStyle = '#00f3ff';
+          ctx.fillText(`UNIT: ${foundHover.botId}`, tx + 10, ty + 20);
+
+          ctx.font = '10px monospace';
+          ctx.fillStyle = '#e0f2fe';
+          const typeName = foundHover.type === CellType.HEART ? 'HEART (MOTOR)' : foundHover.type === CellType.NEURON ? 'NEURON (SENSORY)' : 'SKIN (CHASSIS)';
+          ctx.fillText(`TYPE: ${typeName}`, tx + 10, ty + 40);
+          
+          ctx.fillText(`CHARGE: ${(foundHover.charge * 100).toFixed(0)}%`, tx + 10, ty + 55);
+          ctx.fillText(`PLASTICITY: ${(foundHover.memory).toFixed(2)}`, tx + 10, ty + 70);
+
+          // Indicator Color Dot
+          ctx.beginPath();
+          ctx.arc(tx + 145, ty + 20, 4, 0, Math.PI * 2);
+          ctx.fillStyle = foundHover.type === CellType.HEART ? '#ef4444' : foundHover.type === CellType.NEURON ? '#eab308' : '#00f3ff';
+          ctx.fill();
+          
+          ctx.restore();
+      }
     }
 
     // WebGL Render
@@ -399,7 +502,7 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, width, hei
           ref={canvas2dRef}
           width={width}
           height={height}
-          className="absolute inset-0 z-10"
+          className="absolute inset-0 z-10 cursor-crosshair"
        />
        
        <div className="absolute top-4 right-4 z-20 pointer-events-none flex flex-col gap-1 text-[10px] text-neon-cyan font-mono opacity-60">

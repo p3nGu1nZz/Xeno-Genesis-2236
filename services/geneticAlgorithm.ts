@@ -4,46 +4,39 @@ import { GRID_SIZE } from '../constants';
 
 const MUTATION_RATE = 0.2; 
 
-// "Bilateral Polarity" Template
-// Row 0 (Anterior): NEURON
-// Row N-1 (Posterior): HEART
-// Intermediate: SKIN
-const BILATERAL_TEMPLATE: Record<string, CellType> = {};
-
-// Initialize the bilateral map for reference (optional, used if we want to enforce via platonic pull)
-for (let y = 0; y < GRID_SIZE; y++) {
-    for (let x = 0; x < GRID_SIZE; x++) {
-        const key = `${x},${y}`;
-        if (y === 0) {
-            BILATERAL_TEMPLATE[key] = CellType.NEURON;
-        } else if (y === GRID_SIZE - 1) {
-            BILATERAL_TEMPLATE[key] = CellType.HEART;
-        } else {
-            BILATERAL_TEMPLATE[key] = CellType.SKIN;
-        }
-    }
-}
-
 export function createRandomGenome(generation: number = 0, targetHue?: number): Genome {
   const genes: CellType[][] = [];
   
-  // Enforce Bilateral Polarity Structure
+  // Organic/Fuzzy Generation Logic (Probabilistic)
+  // Instead of forced rows, we use probabilities to create a random distribution
   for (let y = 0; y < GRID_SIZE; y++) {
     const row: CellType[] = [];
     for (let x = 0; x < GRID_SIZE; x++) {
-      if (y === 0) {
-        // Anterior Edge -> Sensory/Control (Neurons)
-        row.push(CellType.NEURON);
-      } else if (y === GRID_SIZE - 1) {
-        // Posterior Edge -> Propulsion (Heart)
-        row.push(CellType.HEART);
-      } else {
-        // Intermediate -> Structural Chassis (Skin)
-        row.push(CellType.SKIN);
-      }
+       const rand = Math.random();
+       
+       // Probability Distribution:
+       // 15% Empty (Gaps for shape variation)
+       // 55% Skin (Structural)
+       // 20% Heart (Muscle/Motor) - Scattered
+       // 10% Neuron (Sensory) - Scattered
+       
+       if (rand < 0.15) {
+           row.push(CellType.EMPTY);
+       } else if (rand < 0.70) {
+           row.push(CellType.SKIN);
+       } else if (rand < 0.90) {
+           row.push(CellType.HEART);
+       } else {
+           row.push(CellType.NEURON);
+       }
     }
     genes.push(row);
   }
+
+  // Ensure at least some structure exists (not all empty)
+  // We can inject a small core of skin to ensure viability
+  const mid = Math.floor(GRID_SIZE/2);
+  if (genes[mid][mid] === CellType.EMPTY) genes[mid][mid] = CellType.SKIN;
 
   let h: number;
   if (targetHue !== undefined) {
@@ -108,26 +101,20 @@ function mutate(genome: Genome): Genome {
   const newGenes = genome.genes.map(row => [...row]);
   let mutated = false;
   
-  // Mutation Logic with Bilateral Bias
-  // We allow mutation, but we bias slightly towards maintaining the polarity
-  
-  // 1. Random Point Mutation
+  // Mutation Logic
   for (let y = 0; y < genome.gridSize; y++) {
     for (let x = 0; x < genome.gridSize; x++) {
       if (Math.random() < 0.05) { // 5% chance per cell
-        // Bias mutation based on row
-        const rand = Math.random();
-        if (y === 0) {
-            // Anterior: Favor Neurons
-            newGenes[y][x] = rand < 0.8 ? CellType.NEURON : CellType.SKIN;
-        } else if (y === genome.gridSize - 1) {
-            // Posterior: Favor Heart
-            newGenes[y][x] = rand < 0.8 ? CellType.HEART : CellType.SKIN;
-        } else {
-            // Center: Mix
-            const types = [CellType.EMPTY, CellType.SKIN, CellType.HEART];
-            newGenes[y][x] = types[Math.floor(Math.random() * types.length)];
-        }
+        const types = [CellType.EMPTY, CellType.SKIN, CellType.HEART, CellType.NEURON];
+        // Weighted random for mutation
+        const r = Math.random();
+        let type = CellType.SKIN;
+        if (r < 0.1) type = CellType.EMPTY;
+        else if (r < 0.6) type = CellType.SKIN;
+        else if (r < 0.85) type = CellType.HEART;
+        else type = CellType.NEURON;
+
+        newGenes[y][x] = type;
         mutated = true;
       }
     }

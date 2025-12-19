@@ -43,7 +43,8 @@ export interface Genome {
   fitness: number;
   generation: number;
   color: string; 
-  bioelectricMemory: number; 
+  bioelectricMemory: number;
+  originX?: number; 
 }
 
 export interface Xenobot {

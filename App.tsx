@@ -89,16 +89,23 @@ const App: React.FC = () => {
 
     // Create Bots with Position Logic
     engine.bots = pop.map((g, i) => {
-        let startX = 100;
+        let startX = 0;
         
-        // Initial setup for Gen 1: Split positions SIGNIFICANTLY to create distinct groups
-        if (currentGen === 1 && !startPop) {
+        // Priority 1: Inherited Position (Evolutionary Continuity)
+        if (typeof g.originX === 'number') {
+             startX = g.originX + (Math.random() - 0.5) * 100; // Add jitter to prevent stacking
+        } 
+        // Priority 2: Gen 1 Split (Initial Setup)
+        else if (currentGen === 1 && !startPop) {
            const midPoint = Math.floor(cfg.populationSize / 2);
            const isGroupA = i < midPoint;
            // Group A at 0, Group B at 1200. Far apart start.
            startX = isGroupA ? 0 : 1200; 
-        } else {
-           // Subsequent generations or loads: Spawn near start with some variance
+           startX += Math.random() * 100;
+        } 
+        // Priority 3: Default / New Random Genome
+        else {
+           // Subsequent generations fallback or loads: Spawn near start with some variance
            startX = 50 + Math.random() * 200;
         }
 
@@ -118,12 +125,14 @@ const App: React.FC = () => {
   const evolve = useCallback(() => {
       if (!engineRef.current) return;
 
-      // 1. Evaluate
+      // 1. Evaluate & Capture Position
       const currentBots = engineRef.current.bots;
       const evaluatedGenomes = populationRef.current.map(genome => {
         const bot = currentBots.find(b => b.genome.id === genome.id);
         const fitness = bot ? engineRef.current!.evaluateFitness(bot) : 0;
-        return { ...genome, fitness };
+        // Capture final position to store in genome for next gen placement
+        const originX = bot ? bot.centerOfMass.x : 0;
+        return { ...genome, fitness, originX };
       });
 
       // 2. Sort & Pick Best
@@ -151,9 +160,15 @@ const App: React.FC = () => {
       setGeneration(nextGenNum);
 
       // 4. Rebuild Physics World
-      // In later generations, we spawn them mixed to simulate the resulting population
+      // Use originX to retain population distribution
       engineRef.current.bots = nextGen.map(g => {
-          const startX = 50 + Math.random() * 250;
+          let startX = 50 + Math.random() * 200; // Default fallback
+          
+          if (typeof g.originX === 'number') {
+             // Continue from where parent left off (average of parents via crossover)
+             startX = g.originX + (Math.random() - 0.5) * 100; 
+          }
+
           const startY = 200 + Math.random() * 100;
           return engineRef.current!.createBot(g, startX, startY);
       });

@@ -59,6 +59,9 @@ function crossover(parentA: Genome, parentB: Genome, generation: number): Genome
   // Inherit color from one parent to maintain lineage visuals
   const color = Math.random() > 0.5 ? parentA.color : parentB.color;
 
+  // Inherit spatial position (average of parents) to maintain population clusters
+  const originX = ((parentA.originX || 0) + (parentB.originX || 0)) / 2;
+
   return {
     id: Math.random().toString(36).substr(2, 9),
     gridSize: size,
@@ -66,7 +69,8 @@ function crossover(parentA: Genome, parentB: Genome, generation: number): Genome
     fitness: 0,
     generation,
     color,
-    bioelectricMemory: (parentA.bioelectricMemory + parentB.bioelectricMemory) / 2
+    bioelectricMemory: (parentA.bioelectricMemory + parentB.bioelectricMemory) / 2,
+    originX
   };
 }
 

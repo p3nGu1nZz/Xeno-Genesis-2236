@@ -1,14 +1,14 @@
 import { PhysicsEngine } from './services/physicsEngine';
 import { createRandomGenome, evolvePopulation } from './services/geneticAlgorithm';
 import { SimulationConfig, Xenobot, Genome, WorkerMessage } from './types';
-import { DEFAULT_CONFIG, INITIAL_POPULATION_SIZE } from './constants';
+import { DEFAULT_CONFIG, INITIAL_POPULATION_SIZE, EVOLUTION_INTERVAL } from './constants';
 
 // Internal State
 let engine: PhysicsEngine | null = null;
 let isRunning = false;
 let timerId: any = null;
 let lastTime = performance.now();
-let timeLeft = 0;
+let evolutionTimer = 0;
 let generation = 1;
 let population: Genome[] = [];
 let bestGenome: Genome | null = null;
@@ -81,48 +81,59 @@ const initSimulation = (config: SimulationConfig, startPop?: Genome[], startGen?
     engine!.bots.push(bot);
   });
   
-  timeLeft = config.generationDuration || 1000;
+  evolutionTimer = 0;
   bestGenome = null;
 };
 
-const evolve = () => {
-  if (!engine) return;
-
-  // 1. Evaluate Fitness
-  const currentBots = engine.bots;
-  const evaluatedGenomes = population.map(genome => {
-    const bot = currentBots.find(b => b.genome.id === genome.id);
-    let fitness = 0;
-    let originX = genome.originX || 0;
+const evolveContinuous = () => {
+    if (!engine) return;
     
-    if (bot) {
-        fitness = engine!.evaluateFitness(bot);
-        originX = bot.centerOfMass.x;
+    const groups = [0, 1];
+    let evolutionOccurred = false;
+
+    groups.forEach(groupId => {
+        const groupBots = engine!.bots.filter(b => b.groupId === groupId);
+        const targetGroupSize = Math.floor(engine!.config.populationSize / 2);
+        
+        if (groupBots.length === 0) {
+            const newG = createRandomGenome(generation, groupId === 0 ? 190 : 340);
+            const parentPos = groupId === 0 ? 0 : 1200;
+            const bot = engine!.createBot(newG, parentPos, 200);
+            engine!.addBot(bot);
+            return;
+        }
+
+        groupBots.sort((a, b) => b.centerOfMass.x - a.centerOfMass.x);
+        
+        const needGrowth = groupBots.length < targetGroupSize;
+        
+        if (!needGrowth) {
+             const victim = groupBots[groupBots.length - 1];
+             engine!.removeBot(victim.id);
+        }
+
+        const parent1 = groupBots[0];
+        const parent2 = groupBots.length > 1 ? groupBots[1] : groupBots[0];
+        
+        const parents = [parent1.genome, parent2.genome];
+        const nextGenParams = evolvePopulation(parents, generation, 10);
+        const childGenome = nextGenParams[nextGenParams.length - 1];
+        
+        const spawnX = parent1.centerOfMass.x - 50 - Math.random() * 50; 
+        const spawnY = parent1.centerOfMass.y + (Math.random() - 0.5) * 50;
+        
+        childGenome.originX = spawnX; 
+
+        const childBot = engine!.createBot(childGenome, spawnX, spawnY);
+        engine!.addBot(childBot);
+        
+        evolutionOccurred = true;
+    });
+
+    if (evolutionOccurred) {
+        generation++;
+        population = engine.bots.map(b => b.genome);
     }
-    return { ...genome, fitness, originX };
-  });
-
-  // 2. Sort & Pick Best
-  const sorted = [...evaluatedGenomes].sort((a, b) => b.fitness - a.fitness);
-  bestGenome = sorted[0];
-
-  // 3. Evolve
-  const nextGen = evolvePopulation(evaluatedGenomes, generation, engine.config.maxPopulationSize);
-  population = nextGen;
-  generation++;
-
-  // 4. Rebuild Physics World
-  engine.bots = [];
-  nextGen.forEach(g => {
-    let startX = g.originX || 0;
-    startX += (Math.random() - 0.5) * 50;
-
-    const bot = engine!.createBot(g, startX, 200 + Math.random() * 100);
-    engine!.bots.push(bot);
-  });
-  
-  // 5. Reset Timer
-  timeLeft = engine.config.generationDuration || 1000;
 };
 
 const loop = () => {
@@ -138,16 +149,17 @@ const loop = () => {
   // Update Best Genome Tracking
   updateBestGenome();
 
-  // Handle Training Timer
-  timeLeft -= 1;
-  if (timeLeft <= 0) {
-      evolve();
+  // Handle Continuous Evolution
+  evolutionTimer += 1;
+  if (evolutionTimer >= EVOLUTION_INTERVAL) {
+      evolveContinuous();
+      evolutionTimer = 0;
   }
 
   // Send Data to Main Thread
   const payload = {
       bots: engine.bots,
-      timeLeft,
+      timeLeft: 0, // Ignored
       generation,
       bestGenome
   };
@@ -190,9 +202,6 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
           } else {
               engine.config = newConfig;
               engine.groundY = newConfig.groundHeight;
-              if (timeLeft > newConfig.generationDuration) {
-                  timeLeft = newConfig.generationDuration;
-              }
           }
       }
       break;

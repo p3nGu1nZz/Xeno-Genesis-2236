@@ -3,7 +3,7 @@ import { SimulationConfig } from './types';
 export const INITIAL_POPULATION_SIZE = 10; // Explicitly 5 bots per group (2 groups)
 export const MAX_POPULATION_CAP = 500; // Updated to 500 per user request
 export const GRID_SIZE = 6; 
-export const GENERATION_TIME = 1000; // Updated to 1000 ticks per user request
+export const EVOLUTION_INTERVAL = 300; // Ticks between continuous evolution steps (approx 5 seconds)
 
 export const DEFAULT_CONFIG: SimulationConfig = {
   populationSize: INITIAL_POPULATION_SIZE,
@@ -17,7 +17,7 @@ export const DEFAULT_CONFIG: SimulationConfig = {
   bioelectricDecay: 0.96,
   plasticity: 0.002, 
   syncRate: 0.2, 
-  generationDuration: GENERATION_TIME,
+  generationDuration: 0, // Unused in continuous mode
 };
 
 export const COLORS = {

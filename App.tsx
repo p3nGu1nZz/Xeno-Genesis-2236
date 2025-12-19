@@ -8,10 +8,18 @@ import { TitleScreen } from './components/TitleScreen';
 import { SettingsPanel } from './components/SettingsPanel';
 import { HelpModal } from './components/HelpModal';
 import { Xenobot, Genome, AnalysisResult, CameraState, SimulationConfig, SaveData } from './types';
-import { DEFAULT_CONFIG, INITIAL_POPULATION_SIZE } from './constants';
+import { DEFAULT_CONFIG, INITIAL_POPULATION_SIZE, EVOLUTION_INTERVAL } from './constants';
 import { ScanEye } from 'lucide-react';
 import { PhysicsEngine } from './services/physicsEngine';
 import { createRandomGenome, evolvePopulation } from './services/geneticAlgorithm';
+
+// Helper for continuous evolution
+// We need access to crossover/mutate from GA but evolvePopulation handles array
+// We will replicate single-step evolution here or refactor. 
+// For simplicity, we'll re-implement the single step using existing helpers if exported, 
+// but since 'crossover' and 'mutate' are not exported, we will rely on a custom logic here 
+// or assume we can just use evolvePopulation on a micro-scale.
+// Actually, evolvePopulation does tournament selection, so we can pass a small pool.
 
 const App: React.FC = () => {
   // Application State
@@ -23,12 +31,12 @@ const App: React.FC = () => {
   // Simulation State
   const [generation, setGeneration] = useState(1);
   const [isRunning, setIsRunning] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(config.generationDuration || 1000);
+  // TimeLeft is removed in favor of continuous flow
   
   // Simulation Engine State (Main Thread)
   const engineRef = useRef<PhysicsEngine | null>(null);
   const populationRef = useRef<Genome[]>([]);
-  const timeLeftRef = useRef<number>(config.generationDuration || 1000);
+  const evolutionTimerRef = useRef<number>(0);
   
   // We use a Ref for bots to pass to Canvas to avoid re-renders
   const botsRef = useRef<Xenobot[]>([]); 
@@ -61,8 +69,6 @@ const App: React.FC = () => {
 
     // Population Initialization Strategy
     if (!pop || pop.length === 0) {
-        // Use the passed configuration for population size. 
-        // Default is 10 (5 per group), but if user changed slider, it respects that.
         const totalSize = Math.max(2, cfg.populationSize);
         const sizeA = Math.floor(totalSize / 2);
         const sizeB = totalSize - sizeA;
@@ -83,11 +89,9 @@ const App: React.FC = () => {
     engine.bots = pop.map((g) => {
         let startX = 0;
         
-        // Priority 1: Inherited Position (Evolutionary Continuity)
         if (typeof g.originX === 'number' && !isNaN(g.originX)) {
              startX = g.originX + (Math.random() - 0.5) * 50; 
         } 
-        // Priority 2: Gen 1 Split (Initial Setup)
         else {
            // Fallback / First Gen
            const match = g.color.match(/hsl\((\d+\.?\d*)/);
@@ -95,10 +99,7 @@ const App: React.FC = () => {
            const isGroupA = (hue > 150 && hue < 230);
            
            startX = isGroupA ? 0 : 1200; 
-           // Reduced spread (150) so the 5 bots appear as a tight group
            startX += (Math.random() - 0.5) * 150; 
-           
-           // IMPORTANT: Save this start position back to the genome so it persists if they don't move
            g.originX = startX;
         }
 
@@ -109,72 +110,84 @@ const App: React.FC = () => {
     engineRef.current = engine;
     botsRef.current = engine.bots;
     
-    timeLeftRef.current = cfg.generationDuration || 1000;
-    setTimeLeft(timeLeftRef.current);
+    evolutionTimerRef.current = 0;
     setBestGenomeA(null);
     setBestGenomeB(null);
   }, []);
 
-  const evolve = useCallback(() => {
-      if (!engineRef.current) return;
+  const evolveContinuous = useCallback(() => {
+    if (!engineRef.current) return;
+    const engine = engineRef.current;
+    
+    // We process each group independently to maintain diversity and group counts
+    const groups = [0, 1];
+    let evolutionOccurred = false;
 
-      const currentBots = engineRef.current.bots;
-      
-      // 1. Evaluate Fitness & Capture Final Positions
-      const evaluatedGenomes = populationRef.current.map(genome => {
-        const bot = currentBots.find(b => b.genome.id === genome.id);
-        let fitness = 0;
-        let originX = genome.originX || 0;
+    groups.forEach(groupId => {
+        const groupBots = engine.bots.filter(b => b.groupId === groupId);
         
-        if (bot) {
-            fitness = engineRef.current!.evaluateFitness(bot);
-            // CRITICAL: Capture the final position (Center of Mass) for the next generation
-            originX = bot.centerOfMass.x; 
+        // Calculate target size for this group (approx half of total config size)
+        const targetGroupSize = Math.floor(config.populationSize / 2);
+        
+        if (groupBots.length === 0) {
+            // Extinction event? Reseed.
+            const newG = createRandomGenome(generation, groupId === 0 ? 190 : 340);
+            const parentPos = groupId === 0 ? 0 : 1200;
+            const bot = engine.createBot(newG, parentPos, 200);
+            engine.addBot(bot);
+            return;
         }
+
+        // Sort by X position (Fitness)
+        groupBots.sort((a, b) => b.centerOfMass.x - a.centerOfMass.x);
         
-        return { ...genome, fitness, originX };
-      });
+        // Strategy:
+        // 1. If population < target, Just Breed (Growth)
+        // 2. If population >= target, Kill Worst then Breed (Replacement)
+        
+        const needGrowth = groupBots.length < targetGroupSize;
+        
+        if (!needGrowth) {
+             // Remove worst bot (last in sorted list)
+             const victim = groupBots[groupBots.length - 1];
+             engine.removeBot(victim.id);
+        }
 
-      // 2. Sort & Pick Best
-      const sorted = [...evaluatedGenomes].sort((a, b) => b.fitness - a.fitness);
-      
-      const isCyan = (g: Genome) => {
-        const match = g.color.match(/hsl\((\d+\.?\d*)/);
-        if(!match) return false;
-        const h = parseFloat(match[1]);
-        return (h > 150 && h < 230);
-      };
-      
-      const bestCyan = sorted.find(g => isCyan(g)) || null;
-      const bestMagenta = sorted.find(g => !isCyan(g)) || null;
-      
-      setBestGenomeA(bestCyan);
-      setBestGenomeB(bestMagenta);
+        // Breed: Pick top performers
+        // If we have at least 1 bot, we can clone/mutate. If 2, we crossover.
+        const parent1 = groupBots[0];
+        const parent2 = groupBots.length > 1 ? groupBots[1] : groupBots[0];
+        
+        // Use evolvePopulation helper to generate a child
+        // We pass a mini-population of the best parents to generate 1 child
+        const parents = [parent1.genome, parent2.genome];
+        
+        // We force generation of 1 child by asking for population size 3 from pool of 2
+        // evolvePopulation logic: returns array of genomes. 
+        // We'll just grab the new one.
+        const nextGenParams = evolvePopulation(parents, generation, 10); // 10 is arbitrary max here
+        
+        // The function returns parents + children. We want the last one (newest).
+        const childGenome = nextGenParams[nextGenParams.length - 1];
+        
+        // Position child near top parent
+        const spawnX = parent1.centerOfMass.x - 50 - Math.random() * 50; // slightly behind leader
+        const spawnY = parent1.centerOfMass.y + (Math.random() - 0.5) * 50;
+        
+        childGenome.originX = spawnX; // Inherit spatial awareness
 
-      // 3. Evolve with Speciation (Positions are inherited inside evolvePopulation via crossover)
-      const nextGen = evolvePopulation(evaluatedGenomes, generation, config.maxPopulationSize);
-      populationRef.current = nextGen;
-      
-      const nextGenNum = generation + 1;
-      setGeneration(nextGenNum);
+        const childBot = engine.createBot(childGenome, spawnX, spawnY);
+        engine.addBot(childBot);
+        
+        evolutionOccurred = true;
+    });
 
-      // 4. Rebuild Physics World
-      // The new genomes in nextGen already have 'originX' set from their parents
-      engineRef.current.bots = nextGen.map((g) => {
-          let startX = g.originX || 0;
-          
-          // Add slight scatter so clones don't stack perfectly
-          startX += (Math.random() - 0.5) * 50;
+    if (evolutionOccurred) {
+        setGeneration(g => g + 1);
+        populationRef.current = engine.bots.map(b => b.genome);
+    }
 
-          const startY = 200 + Math.random() * 100;
-          return engineRef.current!.createBot(g, startX, startY);
-      });
-      botsRef.current = engineRef.current.bots;
-
-      // 5. Reset Timer
-      timeLeftRef.current = config.generationDuration || 1000;
-      setTimeLeft(timeLeftRef.current);
-  }, [config, generation]);
+  }, [config.populationSize, generation]);
 
   const updateSimulation = useCallback(() => {
       if (!engineRef.current) return;
@@ -183,12 +196,15 @@ const App: React.FC = () => {
       engineRef.current.update(performance.now() / 1000);
       botsRef.current = engineRef.current.bots;
 
-      // Update Timer
-      timeLeftRef.current -= 1;
-      setTimeLeft(timeLeftRef.current);
+      // Continuous Evolution Timer
+      evolutionTimerRef.current += 1;
+      if (evolutionTimerRef.current >= EVOLUTION_INTERVAL) {
+          evolveContinuous();
+          evolutionTimerRef.current = 0;
+      }
 
-      // Realtime Best Tracking 
-      if (timeLeftRef.current % 10 === 0) { 
+      // Realtime Best Tracking (Every 10 ticks for UI efficiency)
+      if (evolutionTimerRef.current % 10 === 0) { 
         let bestA: Genome | null = null;
         let maxFitA = -Infinity;
         let bestB: Genome | null = null;
@@ -210,11 +226,7 @@ const App: React.FC = () => {
         if (bestA) setBestGenomeA({...bestA, fitness: maxFitA});
         if (bestB) setBestGenomeB({...bestB, fitness: maxFitB});
       }
-
-      if (timeLeftRef.current <= 0) {
-          evolve();
-      }
-  }, [evolve]);
+  }, [evolveContinuous]);
 
   // --- Helper to extract population for saving ---
   const getPopulationFromBots = (): Genome[] => {
@@ -373,7 +385,7 @@ const App: React.FC = () => {
             <Controls 
                 isRunning={isRunning} 
                 generation={generation}
-                timeRemaining={timeLeft}
+                timeRemaining={0} 
                 onTogglePlay={togglePlay}
                 onAnalyze={handleAnalyze}
                 onOpenSettings={() => {
@@ -392,7 +404,7 @@ const App: React.FC = () => {
                 <div>PHYSICS_ENGINE: MAIN_THREAD_OPTIMIZED</div>
                 <div>GRAVITY: {config.gravity.toFixed(2)} m/s²</div>
                 <div>POPULATION: {populationRef.current.length} / {config.maxPopulationSize}</div>
-                <div>TRAINING_DURATION: {config.generationDuration || 1000}</div>
+                <div>MODE: STEADY_STATE_EVOLUTION</div>
             </div>
             
              <div className="flex gap-2 pointer-events-auto">

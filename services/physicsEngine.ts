@@ -13,6 +13,14 @@ export class PhysicsEngine {
     this.groundY = config.groundHeight;
   }
 
+  addBot(bot: Xenobot) {
+      this.bots.push(bot);
+  }
+
+  removeBot(id: string) {
+      this.bots = this.bots.filter(b => b.id !== id);
+  }
+
   createBot(genome: Genome, startX: number, startY: number): Xenobot {
     const particles: Particle[] = [];
     const springs: Spring[] = [];

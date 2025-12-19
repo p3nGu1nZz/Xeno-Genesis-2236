@@ -4,7 +4,7 @@ import { Play, Pause, Zap, Activity, BrainCircuit, Settings } from 'lucide-react
 interface ControlsProps {
   isRunning: boolean;
   generation: number;
-  timeRemaining: number;
+  timeRemaining: number; // Ignored in UI now
   onTogglePlay: () => void;
   onAnalyze: () => void;
   onOpenSettings: () => void;
@@ -14,7 +14,6 @@ interface ControlsProps {
 export const Controls: React.FC<ControlsProps> = ({
   isRunning,
   generation,
-  timeRemaining,
   onTogglePlay,
   onAnalyze,
   onOpenSettings,
@@ -54,21 +53,18 @@ export const Controls: React.FC<ControlsProps> = ({
           <div className="absolute top-0 right-0 p-2 opacity-20 group-hover:opacity-40 transition-opacity">
             <Zap size={40} className="text-yellow-500"/>
           </div>
-          <div className="text-slate-500 text-xs uppercase mb-1">Morphogenetic Cycle</div>
-          <div className="text-4xl text-white font-display">{generation.toString().padStart(3, '0')}</div>
+          <div className="text-slate-500 text-xs uppercase mb-1">Evolution Cycle</div>
+          <div className="text-4xl text-white font-display">{generation.toString().padStart(4, '0')}</div>
         </div>
 
         <div className="bg-slate-950 p-4 rounded border border-slate-800">
-          <div className="text-slate-500 text-xs uppercase mb-1">Bio-Electric Stability</div>
-          <div className="w-full bg-slate-900 h-2 rounded-full overflow-hidden mt-2">
-            <div 
-              className="bg-neon-magenta h-full transition-all duration-75 relative"
-              style={{ width: `${Math.max(0, (timeRemaining / 600) * 100)}%` }}
-            >
-               <div className="absolute inset-0 bg-white/20 animate-pulse-fast"></div>
-            </div>
-          </div>
-          <div className="text-right text-xs text-neon-magenta mt-1">{timeRemaining} ticks to Mutation</div>
+           <div className="flex items-center gap-2 text-neon-green mb-2">
+               <Activity size={16} />
+               <span className="text-xs font-bold uppercase">Steady State System</span>
+           </div>
+           <div className="text-xs text-slate-400 leading-relaxed">
+               Continuous evolution active. Weakest variants are culled and replaced dynamically every 5 seconds.
+           </div>
         </div>
       </div>
 

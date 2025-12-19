@@ -1,0 +1,5 @@
+{
+  "name": "Xeno-Genesis 2236",
+  "description": "A futuristic Xenobot evolutionary simulator based on Dr. Michael Levin's research. Observe artificial lifeforms evolve morphology and locomotion using genetic algorithms and soft-body physics.",
+  "requestFramePermissions": []
+}

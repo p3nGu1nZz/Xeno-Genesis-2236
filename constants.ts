@@ -1,11 +1,13 @@
 import { SimulationConfig } from './types';
 
-export const INITIAL_POPULATION_SIZE = 12;
+export const INITIAL_POPULATION_SIZE = 20; // Start small
+export const MAX_POPULATION_CAP = 100; // Default limit
 export const GRID_SIZE = 6; 
 export const GENERATION_TIME = 600; 
 
 export const DEFAULT_CONFIG: SimulationConfig = {
   populationSize: INITIAL_POPULATION_SIZE,
+  maxPopulationSize: MAX_POPULATION_CAP,
   gravity: 0.15, 
   friction: 0.92, 
   muscleStrength: 0.25, 

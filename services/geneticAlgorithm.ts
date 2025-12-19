@@ -59,8 +59,24 @@ function crossover(parentA: Genome, parentB: Genome, generation: number): Genome
   // Inherit color from one parent to maintain lineage visuals
   const color = Math.random() > 0.5 ? parentA.color : parentB.color;
 
-  // Inherit spatial position (average of parents) to maintain population clusters
-  const originX = ((parentA.originX || 0) + (parentB.originX || 0)) / 2;
+  // Inherit spatial position. 
+  // CRITICAL FIX: Do NOT average positions ((A+B)/2). 
+  // Averaging causes distinct groups (e.g., at x=0 and x=1200) to merge into the center (x=600).
+  // Instead, randomly inherit the position from one parent to maintain distinct spatial clusters.
+  const posA = parentA.originX ?? 0;
+  const posB = parentB.originX ?? 0;
+  
+  // If parents are close, averaging is fine/smooth. If far, pick one.
+  const dist = Math.abs(posA - posB);
+  let originX = posA;
+  
+  if (dist < 200) {
+      originX = (posA + posB) / 2;
+  } else {
+      // Pick the position of the parent that contributed the color (or random)
+      // Linking to color helps visual coherence of species
+      originX = (color === parentA.color) ? posA : posB;
+  }
 
   return {
     id: Math.random().toString(36).substr(2, 9),
@@ -136,19 +152,50 @@ function adjustColor(hsl: string): string {
     return `hsl(${h.toFixed(0)}, ${match[2]}%, ${match[3]}%)`;
 }
 
-export function evolvePopulation(population: Genome[], generation: number): Genome[] {
-  const sorted = [...population].sort((a, b) => b.fitness - a.fitness);
-  const nextGen = [sorted[0], sorted[1]]; // Elitism
+// Helper to check group
+const isGroupA = (g: Genome) => {
+    const match = g.color.match(/hsl\((\d+\.?\d*)/);
+    if(!match) return false;
+    const h = parseFloat(match[1]);
+    return (h > 150 && h < 230);
+};
 
-  while (nextGen.length < population.length) {
-    const p1 = tournamentSelect(sorted);
-    const p2 = tournamentSelect(sorted);
-    let child = crossover(p1, p2, generation + 1);
-    child = mutate(child);
-    nextGen.push(child);
-  }
+export function evolvePopulation(population: Genome[], generation: number, maxPopulationSize: number): Genome[] {
+  // Split population into Group A and Group B for speciation
+  const poolA = population.filter(isGroupA);
+  const poolB = population.filter(g => !isGroupA(g));
 
-  return nextGen;
+  const maxPerGroup = Math.floor(maxPopulationSize / 2);
+  
+  const evolveSubPool = (pool: Genome[], currentMax: number): Genome[] => {
+      if (pool.length === 0) return [];
+      
+      const sorted = [...pool].sort((a, b) => b.fitness - a.fitness);
+      
+      // Determine new size: Grow by 20% or fill to min of 4, up to max
+      let newSize = Math.ceil(pool.length * 1.2);
+      if (newSize < 4) newSize = 4; 
+      if (newSize > currentMax) newSize = currentMax;
+      
+      // Elitism: Keep top 2
+      const nextGen = [sorted[0]];
+      if (sorted.length > 1) nextGen.push(sorted[1]);
+      
+      // Fill the rest
+      while (nextGen.length < newSize) {
+          const p1 = tournamentSelect(sorted);
+          const p2 = tournamentSelect(sorted);
+          let child = crossover(p1, p2, generation + 1);
+          child = mutate(child);
+          nextGen.push(child);
+      }
+      return nextGen;
+  };
+
+  const nextA = evolveSubPool(poolA, maxPerGroup);
+  const nextB = evolveSubPool(poolB, maxPerGroup);
+
+  return [...nextA, ...nextB];
 }
 
 function tournamentSelect(pool: Genome[]): Genome {

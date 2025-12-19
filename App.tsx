@@ -61,7 +61,7 @@ const App: React.FC = () => {
 
     // Population Initialization Strategy
     if (!pop || pop.length === 0) {
-        // Create 2 Distinct Groups for interaction
+        // Create 2 Distinct Groups for interaction, starts SMALL (e.g. 10 each)
         const sizeA = Math.floor(cfg.populationSize / 2);
         const sizeB = cfg.populationSize - sizeA;
         
@@ -72,17 +72,7 @@ const App: React.FC = () => {
         const groupB = Array(sizeB).fill(null).map(() => createRandomGenome(currentGen, 340)); 
         
         pop = [...groupA, ...groupB];
-    } else {
-        // Resize population if config changed
-        if (pop.length < cfg.populationSize) {
-             const needed = cfg.populationSize - pop.length;
-             // Newcomers get random colors
-             const extras = Array(needed).fill(null).map(() => createRandomGenome(currentGen));
-             pop = [...pop, ...extras];
-        } else if (pop.length > cfg.populationSize) {
-             pop = pop.slice(0, cfg.populationSize);
-        }
-    }
+    } 
 
     populationRef.current = pop;
     setGeneration(currentGen);
@@ -92,24 +82,23 @@ const App: React.FC = () => {
         let startX = 0;
         
         // Priority 1: Inherited Position (Evolutionary Continuity)
-        if (typeof g.originX === 'number') {
-             startX = g.originX + (Math.random() - 0.5) * 100; // Add jitter to prevent stacking
+        // Check strict number type to avoid NaN issues
+        if (typeof g.originX === 'number' && !isNaN(g.originX)) {
+             startX = g.originX + (Math.random() - 0.5) * 50; 
         } 
         // Priority 2: Gen 1 Split (Initial Setup)
-        else if (currentGen === 1 && !startPop) {
-           const midPoint = Math.floor(cfg.populationSize / 2);
-           const isGroupA = i < midPoint;
-           // Group A at 0, Group B at 1200. Far apart start.
-           startX = isGroupA ? 0 : 1200; 
-           startX += Math.random() * 100;
-        } 
-        // Priority 3: Default / New Random Genome
+        // If this is the very first setup or a reset, enforce the split
         else {
-           // Subsequent generations fallback or loads: Spawn near start with some variance
-           startX = 50 + Math.random() * 200;
+           // Fallback / First Gen
+           const match = g.color.match(/hsl\((\d+\.?\d*)/);
+           const hue = match ? parseFloat(match[1]) : 0;
+           const isGroupA = (hue > 150 && hue < 230);
+           
+           startX = isGroupA ? 0 : 1200; 
+           startX += (Math.random() - 0.5) * 300; // Spread out more for initial spawn
         }
 
-        const startY = 200 + Math.random() * 100; // Randomize height slightly
+        const startY = 200 + Math.random() * 100; 
         return engine.createBot(g, startX, startY);
     });
     
@@ -130,15 +119,20 @@ const App: React.FC = () => {
       const evaluatedGenomes = populationRef.current.map(genome => {
         const bot = currentBots.find(b => b.genome.id === genome.id);
         const fitness = bot ? engineRef.current!.evaluateFitness(bot) : 0;
+        
         // Capture final position to store in genome for next gen placement
-        const originX = bot ? bot.centerOfMass.x : 0;
+        // Robust check: Use bot position if available, otherwise keep existing originX.
+        let originX = genome.originX; 
+        if (bot) {
+            originX = bot.centerOfMass.x;
+        }
+        
         return { ...genome, fitness, originX };
       });
 
       // 2. Sort & Pick Best
       const sorted = [...evaluatedGenomes].sort((a, b) => b.fitness - a.fitness);
       
-      // Update Bests for display (heuristic based on hue)
       const isCyan = (g: Genome) => {
         const match = g.color.match(/hsl\((\d+\.?\d*)/);
         if(!match) return false;
@@ -152,21 +146,31 @@ const App: React.FC = () => {
       setBestGenomeA(bestCyan);
       setBestGenomeB(bestMagenta);
 
-      // 3. Evolve (Global pool - survival of the fittest mixes the groups)
-      const nextGen = evolvePopulation(evaluatedGenomes, generation);
+      // 3. Evolve with Speciation and Growth
+      const nextGen = evolvePopulation(evaluatedGenomes, generation, config.maxPopulationSize);
       populationRef.current = nextGen;
+      
+      // Update config size to match current growth so slider UI updates if we wanted bidirectional sync, 
+      // but here we just update the internal simulation population count.
       
       const nextGenNum = generation + 1;
       setGeneration(nextGenNum);
 
       // 4. Rebuild Physics World
-      // Use originX to retain population distribution
-      engineRef.current.bots = nextGen.map(g => {
-          let startX = 50 + Math.random() * 200; // Default fallback
+      engineRef.current.bots = nextGen.map((g, i) => {
+          let startX = 0;
           
-          if (typeof g.originX === 'number') {
-             // Continue from where parent left off (average of parents via crossover)
-             startX = g.originX + (Math.random() - 0.5) * 100; 
+          if (typeof g.originX === 'number' && !isNaN(g.originX)) {
+             // Continue from where parent left off
+             startX = g.originX + (Math.random() - 0.5) * 50; 
+          } else {
+             // Fallback for new mutations/children who inherited originX from parent in crossover
+             // But if crossover didn't set it (edge case), guess via color
+             const match = g.color.match(/hsl\((\d+\.?\d*)/);
+             const h = match ? parseFloat(match[1]) : 0;
+             const isCyan = (h > 150 && h < 230);
+             startX = isCyan ? 0 : 1200;
+             startX += (Math.random() - 0.5) * 300;
           }
 
           const startY = 200 + Math.random() * 100;
@@ -190,8 +194,8 @@ const App: React.FC = () => {
       timeLeftRef.current -= 1;
       setTimeLeft(timeLeftRef.current);
 
-      // Realtime Best Tracking (Throttle this if performance is an issue, but okay for now)
-      if (timeLeftRef.current % 10 === 0) { // Update stats every 10 ticks
+      // Realtime Best Tracking 
+      if (timeLeftRef.current % 10 === 0) { 
         let bestA: Genome | null = null;
         let maxFitA = -Infinity;
         let bestB: Genome | null = null;
@@ -199,7 +203,6 @@ const App: React.FC = () => {
 
         engineRef.current.bots.forEach(b => {
              const x = b.centerOfMass.x;
-             // Check Hue
              const match = b.genome.color.match(/hsl\((\d+\.?\d*)/);
              const h = match ? parseFloat(match[1]) : 0;
              const isCyan = (h > 150 && h < 230);
@@ -211,7 +214,6 @@ const App: React.FC = () => {
              }
         });
         
-        // Only update state if we found something, to prevent flickering
         if (bestA) setBestGenomeA({...bestA, fitness: maxFitA});
         if (bestB) setBestGenomeB({...bestB, fitness: maxFitB});
       }
@@ -227,16 +229,8 @@ const App: React.FC = () => {
   };
 
   const getCenteredCamera = (width: number, height: number, zoom: number = 0.55) => {
-    // Center the camera between the two starting groups roughly (0 and 1200) -> 600
-    // We target x=600 and y=600 to see the fall and the ground.
     const targetX = 600;
     const targetY = 600; 
-    
-    // Logic matched to SimulationCanvas translation:
-    // ctx.translate(width/2, height/2)
-    // ctx.scale(zoom, zoom)
-    // ctx.translate(-width/2 + x, -height/2 + y)
-    // Resulting Camera offset X/Y needed to center TargetX/TargetY:
     return {
         x: width / 2 - targetX,
         y: height / 2 - targetY,
@@ -271,7 +265,6 @@ const App: React.FC = () => {
   const startNewSimulation = () => {
     setAppState('SIMULATION');
     initSimulation(config);
-    // Start zoomed out to see both groups
     setCamera(getCenteredCamera(window.innerWidth, window.innerHeight, 0.55));
     setShowHelp(true); 
     setIsRunning(true);
@@ -279,8 +272,6 @@ const App: React.FC = () => {
 
   const handleApplySettings = (newConfig: SimulationConfig) => {
     setConfig(newConfig);
-    // Re-init if structural changes, otherwise just update props
-    // For simplicity, we restart to apply population/grid changes safely
     initSimulation(newConfig);
     setShowSettings(false);
     setIsRunning(true);
@@ -343,7 +334,6 @@ const App: React.FC = () => {
   // --- Interactions ---
 
   const handleAnalyze = async () => {
-    // Analyze the global best, or default to A
     const target = bestGenomeA || bestGenomeB;
     if (!target) return;
     setIsAnalyzing(true);
@@ -406,7 +396,7 @@ const App: React.FC = () => {
             <div className="absolute top-4 left-80 ml-6 bg-slate-900/50 backdrop-blur border border-slate-700 p-2 rounded text-xs text-slate-400">
                 <div>PHYSICS_ENGINE: MAIN_THREAD_OPTIMIZED</div>
                 <div>GRAVITY: {config.gravity.toFixed(2)} m/s²</div>
-                <div>POPULATION: {config.populationSize} (A vs B)</div>
+                <div>POPULATION: {populationRef.current.length} / {config.maxPopulationSize}</div>
                 <div>TRAINING_DURATION: {config.generationDuration || 600}</div>
             </div>
             

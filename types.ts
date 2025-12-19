@@ -56,10 +56,12 @@ export interface Xenobot {
   startPosition: Point;
   isDead: boolean;
   totalCharge: number; 
+  groupId: number; // 0 for Group A, 1 for Group B
 }
 
 export interface SimulationConfig {
-  populationSize: number;
+  populationSize: number; // Initial / Current Size
+  maxPopulationSize: number; // Cap
   gravity: number;
   friction: number;
   muscleStrength: number;

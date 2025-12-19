@@ -78,7 +78,7 @@ const evolve = () => {
   bestGenome = sorted[0];
 
   // 3. Evolve
-  const nextGen = evolvePopulation(evaluatedGenomes, generation);
+  const nextGen = evolvePopulation(evaluatedGenomes, generation, engine.config.maxPopulationSize);
   population = nextGen;
   generation++;
 

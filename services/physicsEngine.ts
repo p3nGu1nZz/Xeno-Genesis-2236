@@ -88,6 +88,12 @@ export class PhysicsEngine {
       }
     }
 
+    // Determine Group ID based on Hue
+    const match = genome.color.match(/hsl\((\d+\.?\d*)/);
+    const hue = match ? parseFloat(match[1]) : 0;
+    const isGroupA = (hue > 150 && hue < 230); // Cyan/Blue
+    const groupId = isGroupA ? 0 : 1;
+
     return {
       id: uid(),
       genome,
@@ -96,7 +102,8 @@ export class PhysicsEngine {
       centerOfMass: { x: startX, y: startY },
       startPosition: { x: startX, y: startY },
       isDead: false,
-      totalCharge: 0
+      totalCharge: 0,
+      groupId
     };
   }
 
@@ -122,11 +129,62 @@ export class PhysicsEngine {
     // Clamp
     const fluidBaseFriction = collectiveFriction < 0.85 ? 0.85 : (collectiveFriction > 0.995 ? 0.995 : collectiveFriction);
     
+    // 1. Group Repulsion Logic (Avoidance)
+    // Only run if we have enough bots to matter, and limit complexity
+    if (botCount > 1) {
+        this.applyGroupRepulsion(botCount);
+    }
+
     for (let i = 0; i < botCount; i++) {
       const bot = this.bots[i];
       if (bot.isDead) continue;
       this.updateBot(bot, time, dt, dtSq, fluidBaseFriction);
     }
+  }
+
+  // Logic to make groups avoid each other
+  private applyGroupRepulsion(botCount: number) {
+      // Repulsion radius
+      const RADIUS = 200; 
+      const FORCE_STRENGTH = 0.5; 
+
+      for (let i = 0; i < botCount; i++) {
+          const b1 = this.bots[i];
+          if (b1.isDead) continue;
+
+          for (let j = i + 1; j < botCount; j++) {
+              const b2 = this.bots[j];
+              if (b2.isDead) continue;
+
+              // Only repel if different groups
+              if (b1.groupId !== b2.groupId) {
+                  const dx = b1.centerOfMass.x - b2.centerOfMass.x;
+                  const dy = b1.centerOfMass.y - b2.centerOfMass.y;
+                  const distSq = dx*dx + dy*dy;
+
+                  if (distSq < RADIUS * RADIUS && distSq > 0.1) {
+                      const dist = Math.sqrt(distSq);
+                      const overlap = RADIUS - dist;
+                      
+                      // Calculate repulsion vector
+                      const fx = (dx / dist) * overlap * FORCE_STRENGTH;
+                      const fy = (dy / dist) * overlap * FORCE_STRENGTH;
+
+                      // Apply to all particles in b1
+                      for(const p of b1.particles) {
+                          p.force.x += fx / b1.particles.length;
+                          p.force.y += fy / b1.particles.length;
+                      }
+                      
+                      // Apply inverse to all particles in b2
+                      for(const p of b2.particles) {
+                          p.force.x -= fx / b2.particles.length;
+                          p.force.y -= fy / b2.particles.length;
+                      }
+                  }
+              }
+          }
+      }
   }
 
   // Linear interpolation helper for smoothing

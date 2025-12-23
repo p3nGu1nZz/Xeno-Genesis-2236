@@ -40,6 +40,11 @@
         background-color: #050b14;
         color: #e0f2fe;
         overflow: hidden;
+        user-select: none;
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        cursor: default;
       }
       /* Custom Scrollbar for the future */
       ::-webkit-scrollbar {
@@ -51,6 +56,10 @@
       ::-webkit-scrollbar-thumb {
         background: #00f3ff; 
         border-radius: 3px;
+      }
+      /* Prevent outline on focus for a cleaner game-like look */
+      *:focus {
+        outline: none;
       }
     </style>
   <script type="importmap">

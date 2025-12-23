@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { analyzeXenobot } from './services/geminiService';
 import { SimulationCanvas } from './components/SimulationCanvas';
@@ -296,7 +294,7 @@ const App: React.FC = () => {
           isAutoCameraRef.current = true;
       }
 
-      // Manual Control
+      // Manual Control - Immediate Priority
       if (keysPressed.current.size > 0) {
           isAutoCameraRef.current = false;
           lastInputTimeRef.current = now;
@@ -343,6 +341,7 @@ const App: React.FC = () => {
              const targetCamX = targetBot.centerOfMass.x + offsetX;
              const targetCamY = targetBot.centerOfMass.y;
              
+             // High responsiveness for snappy tracking
              const lerp = 0.1; 
              
              setCamera(prev => ({
@@ -371,6 +370,11 @@ const App: React.FC = () => {
   // Keyboard Input
   useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
+          // Prevent arrow keys from scrolling the window
+          if(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+              e.preventDefault();
+          }
+          
           keysPressed.current.add(e.key.toLowerCase());
           if (e.key === 'q' || e.key === '-') setCamera(c => ({...c, zoom: Math.max(0.1, c.zoom * 0.95)}));
           if (e.key === 'e' || e.key === '=') setCamera(c => ({...c, zoom: Math.min(2.0, c.zoom * 1.05)}));

@@ -338,8 +338,8 @@ export class PhysicsEngine {
           const dvy = v2y - v1y;
           
           // UPDATED: Increased Damping Coefficient by 1.2x
-          // Previous: 45.5625 -> New: 54.675
-          const dampingCoeff = 54.675; 
+          // Previous: 54.675 -> New: 65.61
+          const dampingCoeff = 65.61; 
 
           p1.force.x += dvx * dampingCoeff;
           p1.force.y += dvy * dampingCoeff;
@@ -371,8 +371,8 @@ export class PhysicsEngine {
           const diff = (dist - targetLen) / dist;
           
           // UPDATED: Increased Stiffness Multiplier by 1.2x
-          // Previous: 91.125 -> New: 109.35
-          const forceVal = (s.stiffness * 109.35) * diff;
+          // Previous: 109.35 -> New: 131.22
+          const forceVal = (s.stiffness * 131.22) * diff;
 
           const stress = Math.abs(diff); 
           const chargeGen = stress * 0.6;
@@ -520,44 +520,59 @@ export class PhysicsEngine {
       const relX = (p.pos.x - bot.centerOfMass.x);
       const relY = (p.pos.y - bot.centerOfMass.y);
       
-      const longitudinalPhase = (relX * hx + relY * hy);
-      const lateralPhase = (relX * -hy + relY * hx);
+      // Calculate position along the "spine" (longitudinal axis defined by heading)
+      // Positive projection means "in front", negative means "behind" center of mass
+      const longitudinalProjection = (relX * hx + relY * hy);
       
-      const waveLength = 150.0 + (memory * 200.0); 
-      
-      const spatialPhase = (longitudinalPhase + lateralPhase * 0.3) / waveLength;
+      // Metachronal Wave Properties
+      // Wave travels backwards along the body to push fluid backwards (propelling bot forward)
+      // High memory = stronger coordination = longer, faster waves
+      const waveLength = 120.0 + (memory * 250.0); 
+      const waveSpeed = 3.0 + (memory * 2.0);
 
-      const baseFreq = 2.0;
-      const memoryFreqMod = memory * 3.0;
-      const waveFreq = baseFreq + memoryFreqMod;
+      // The phase depends on position along the body
+      const spatialPhase = longitudinalProjection / waveLength;
       
-      const cycle = spatialPhase * Math.PI * 2.0 - (time * waveFreq * Math.PI * 2.0);
+      // Temporal component with breathing rhythm (frequency modulation)
+      const breathing = 1.0 + 0.2 * Math.sin(time * 0.5); 
+      const temporalPhase = time * waveSpeed * breathing;
+
+      // Metachronal Wave Function: sin(k*x - w*t)
+      // We subtract temporal phase so wave travels in positive x direction relative to body frame?
+      // Actually, for propulsion, effective stroke usually travels. 
+      const cycle = (spatialPhase * Math.PI * 2.0) - temporalPhase;
       
       const rawBeat = Math.sin(cycle);
       
+      // Asymmetric Stroke (Power vs Recovery)
       let thrustMag = 0;
       let lateralMag = 0;
 
-      if (rawBeat > 0) {
-          const power = Math.pow(rawBeat, 1.5); 
-          thrustMag = CILIA_FORCE * 2.5 * power;
+      if (rawBeat > 0.2) {
+          // Power Stroke
+          const power = Math.pow(rawBeat, 2.0); 
+          thrustMag = CILIA_FORCE * 3.0 * power;
+          // Slight lateral kick during power stroke
           lateralMag = CILIA_FORCE * 0.5 * Math.cos(cycle); 
       } else {
-          thrustMag = CILIA_FORCE * 0.1 * rawBeat; 
+          // Recovery Stroke (Drag)
+          thrustMag = CILIA_FORCE * 0.1 * rawBeat; // Negative drag
           lateralMag = 0;
       }
 
+      // Apply forces relative to heading
       let cx = (thrustMag * hx) + (lateralMag * -hy);
       let cy = (thrustMag * hy) + (lateralMag * hx);
       
+      // Fluid Drag / Cohesion Damping
       const pVx = p.pos.x - p.oldPos.x;
       const pVy = p.pos.y - p.oldPos.y;
-      
       const cohesionStrength = 8.0 * memory; 
       
       cx += (avgVx - pVx) * cohesionStrength;
       cy += (avgVy - pVy) * cohesionStrength;
 
+      // Random Noise (decreases with memory/intelligence)
       if (memory < 0.3) {
           const noiseScale = (0.3 - memory) * 0.5;
           cx += (Math.random() - 0.5) * noiseScale * CILIA_FORCE;

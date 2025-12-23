@@ -371,10 +371,10 @@ export class PhysicsEngine {
 
       // 3. Merged Damping & Spring Forces (Optimized)
       // Tuning constants for stable, smooth motion
-      const dampingFactor = 100.0; // High damping for less vibration (was ~78)
-      const stiffnessFactor = 120.0; // Lower stiffness for "soft" body feel (was ~157)
+      const dampingFactor = 100.0; 
+      const stiffnessFactor = 120.0;
       
-      const chargeLimit = 60.0;
+      const chargeLimit = 100.0; // Increased charge cap for high intensity
       const decayFactor = METABOLIC_DECAY * 0.1;
 
       for (const s of springs) {
@@ -422,7 +422,8 @@ export class PhysicsEngine {
           const forceVal = (s.stiffness * stiffnessFactor) * diff;
 
           const stress = Math.abs(diff); 
-          const chargeGen = stress * 10.0; 
+          // Increased charge generation multiplier for visual impact
+          const chargeGen = stress * 15.0; 
           
           if (chargeGen > 0.005) {
               p1.charge = Math.min(chargeLimit, p1.charge + chargeGen);
@@ -507,8 +508,8 @@ export class PhysicsEngine {
         
         // Bioelectric charge increases local viscosity (simulating mucus/secretion)
         // Significantly boosted physical impact of high charge for visual effect
-        // Adjusted from 15.0 to 10.0 to balance with higher charge capacity
-        const viscosityMod = 1.0 + (p.charge * 10.0);
+        // Balanced to 5.0 to accommodate higher charge capacity without freezing bots
+        const viscosityMod = 1.0 + (p.charge * 5.0);
         
         // Apply structural modifier
         const dragFactor = BASE_DRAG * viscosityMod * structuralDragMod;
@@ -536,8 +537,8 @@ export class PhysicsEngine {
         p.force.x += dxSelf * dynamicTension;
         p.force.y += dySelf * dynamicTension;
 
-        // Apply decay. Slower decay (0.99998) for persistent, glowing trails.
-        p.charge *= 0.99998;
+        // Apply decay. Much slower decay (0.99999) for extremely persistent field trails.
+        p.charge *= 0.99999;
     }
 
     // Apply Cilia Forces

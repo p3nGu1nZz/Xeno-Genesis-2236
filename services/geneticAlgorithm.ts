@@ -112,7 +112,8 @@ function createNervousRingGenome(generation: number, targetHue?: number): Genome
     return enforceContiguity(genome);
 }
 
-// Ensures the genome is a single connected component (Orthogonal Neighbors)
+// Ensures the genome is a single connected component
+// Uses 8-way connectivity (Moore Neighborhood) to match Physics Engine springs
 // Removes any disconnected islands, keeping only the largest structure.
 export function enforceContiguity(genome: Genome): Genome {
     const genes = genome.genes.map(row => [...row]);
@@ -133,10 +134,13 @@ export function enforceContiguity(genome: Genome): Genome {
                     const curr = queue.shift()!;
                     component.push(curr);
                     
-                    // Orthogonal neighbors only for strict contiguity
+                    // 8-Way Neighbors (Orthogonal + Diagonal)
+                    // This matches the physics engine spring creation logic
                     const neighbors = [
                         {x: curr.x+1, y: curr.y}, {x: curr.x-1, y: curr.y},
-                        {x: curr.x, y: curr.y+1}, {x: curr.x, y: curr.y-1}
+                        {x: curr.x, y: curr.y+1}, {x: curr.x, y: curr.y-1},
+                        {x: curr.x+1, y: curr.y+1}, {x: curr.x-1, y: curr.y-1},
+                        {x: curr.x+1, y: curr.y-1}, {x: curr.x-1, y: curr.y+1}
                     ];
                     
                     for(const n of neighbors) {
@@ -154,18 +158,43 @@ export function enforceContiguity(genome: Genome): Genome {
         }
     }
 
-    // If empty
+    // If empty, seed a minimal 2-node structure
     if (components.length === 0) {
-        genes[Math.floor(size/2)][Math.floor(size/2)] = CellType.SKIN;
+        const mid = Math.floor(size/2);
+        genes[mid][mid] = CellType.SKIN;
+        if (mid + 1 < size) genes[mid][mid+1] = CellType.SKIN;
+        else if (mid - 1 >= 0) genes[mid][mid-1] = CellType.SKIN;
         return { ...genome, genes };
     }
-
-    // If already contiguous
-    if (components.length === 1) return genome;
 
     // Find largest component by node count
     components.sort((a, b) => b.length - a.length);
     const largest = components[0];
+
+    // Ensure at least 2 nodes to guarantee edges (springs) exist
+    if (largest.length < 2) {
+        const seed = largest[0];
+        // Try orthogonal neighbors first for visual cleanliness
+        const neighbors = [
+            {x: seed.x+1, y: seed.y}, {x: seed.x-1, y: seed.y},
+            {x: seed.x, y: seed.y+1}, {x: seed.x, y: seed.y-1}
+        ];
+        
+        let added = false;
+        for (const n of neighbors) {
+            if (n.x >= 0 && n.x < size && n.y >= 0 && n.y < size) {
+                // Only grow into empty space to avoid overwriting logic
+                if (genes[n.y][n.x] === CellType.EMPTY) {
+                    genes[n.y][n.x] = CellType.SKIN;
+                    largest.push(n);
+                    added = true;
+                    break;
+                }
+            }
+        }
+        // If still size 1 (extremely rare trapped case), it might die, but that's acceptable evolution
+    }
+
     const keepSet = new Set(largest.map(c => `${c.x},${c.y}`));
 
     // Prune everything else
@@ -182,7 +211,7 @@ export function enforceContiguity(genome: Genome): Genome {
     return { ...genome, genes };
 }
 
-// Shrinks a genome to a small fraction of its size (1/10th intent), keeping connected components
+// Shrinks a genome to a small fraction of its size, keeping connected components
 export function pruneGenome(genome: Genome, retentionRate: number = 0.15): Genome {
     const newGenes = genome.genes.map(row => [...row]);
     const activeCells: {x: number, y: number}[] = [];
@@ -215,10 +244,12 @@ export function pruneGenome(genome: Genome, retentionRate: number = 0.15): Genom
     while (queue.length > 0 && toKeep.size < targetSize) {
         const curr = queue.shift()!;
         
-        // Neighbors
+        // 8-Way Neighbors for pruning (Consistency with enforceContiguity)
         const neighbors = [
             {x: curr.x+1, y: curr.y}, {x: curr.x-1, y: curr.y},
-            {x: curr.x, y: curr.y+1}, {x: curr.x, y: curr.y-1}
+            {x: curr.x, y: curr.y+1}, {x: curr.x, y: curr.y-1},
+            {x: curr.x+1, y: curr.y+1}, {x: curr.x-1, y: curr.y-1},
+            {x: curr.x+1, y: curr.y-1}, {x: curr.x-1, y: curr.y+1}
         ];
 
         for (const n of neighbors) {

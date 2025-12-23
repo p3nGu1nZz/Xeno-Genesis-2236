@@ -56,7 +56,7 @@ const FS_SOURCE = `
     // Scale field physics with zoom
     float zoomScale = max(0.1, u_zoom);
     // Tighter base radius for a concise, localized field effect
-    float radiusBase = 12.0 * zoomScale; 
+    float radiusBase = 8.0 * zoomScale; 
     float radiusSq = radiusBase * radiusBase;
     
     float field = 0.0;
@@ -88,13 +88,14 @@ const FS_SOURCE = `
     vec2 worldUV = (gl_FragCoord.xy / u_zoom) + u_offset;
 
     // Steady Distortion (Subtle heat haze, very slow)
-    float distortNoise = noise(worldUV * 0.01 + vec2(u_time * 0.02)); 
+    // Slower frequency (0.005) for steady-state look
+    float distortNoise = noise(worldUV * 0.005 + vec2(u_time * 0.02)); 
     // Intensity heavily scaled by field strength
     // Increased distortion scaling for enhanced visual effect
-    vec2 distortedUV = worldUV + vec2(distortNoise) * field * 50.0; 
+    vec2 distortedUV = worldUV + vec2(distortNoise) * field * 80.0; 
 
     // Electric arcs / filaments on distorted UVs - Slower animation
-    float n = fbm(distortedUV * 0.01 + vec2(0.0, u_time * 0.05));
+    float n = fbm(distortedUV * 0.005 + vec2(0.0, u_time * 0.02));
     
     // Steady State Flow - No pulsing, just slow evolution
     float flow = field * (0.95 + 0.05 * n);
@@ -110,7 +111,7 @@ const FS_SOURCE = `
        vec3 cElec = vec3(0.8, 0.9, 1.0);
 
        float alpha = smoothstep(0.05, 0.25, flow);
-       alpha = clamp(alpha, 0.0, 0.92); // Increased max opacity for brighter fields
+       alpha = clamp(alpha, 0.0, 0.95); // Increased max opacity for brighter fields
 
        vec3 rgb = baseColor * flow * 1.5;
        

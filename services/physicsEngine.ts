@@ -1,15 +1,13 @@
 
-import { Xenobot, Particle, Spring, Genome, CellType, SimulationConfig, Food } from '../types';
-import { DEFAULT_CONFIG, TIMESTEP, CILIA_FORCE, METABOLIC_DECAY, INITIAL_YOLK_ENERGY, SURFACE_TENSION, FOOD_COUNT, FOOD_ENERGY, FOOD_RADIUS, MITOSIS_THRESHOLD } from '../constants';
+import { Xenobot, Particle, Spring, Genome, CellType, SimulationConfig, Food, GeneticStats } from '../types';
+import { DEFAULT_CONFIG, TIMESTEP, CILIA_FORCE, METABOLIC_DECAY, INITIAL_YOLK_ENERGY, SURFACE_TENSION, FOOD_ENERGY, FOOD_RADIUS, MITOSIS_THRESHOLD, BREAKING_THRESHOLD } from '../constants';
 import { mutate } from './geneticAlgorithm';
 
 const uid = () => Math.random().toString(36).substr(2, 9);
 const MAX_FORCE = 15.0;
 const MAX_VELOCITY = 20.0;
 const PARTICLE_MAINTENANCE_COST = 0.005;
-const BOUNDARY_LIMIT = 2500; 
 const COLLISION_RADIUS = 12; 
-const BREAKING_THRESHOLD = 4.5; 
 
 export class PhysicsEngine {
   bots: Xenobot[] = [];
@@ -26,18 +24,43 @@ export class PhysicsEngine {
 
   initFood() {
     this.food = [];
-    for (let i = 0; i < FOOD_COUNT; i++) {
+    const count = this.config.foodCount;
+    for (let i = 0; i < count; i++) {
         this.spawnFood();
     }
   }
 
   spawnFood() {
-     const xRange = BOUNDARY_LIMIT * 2;
-     const x = (Math.random() - 0.5) * xRange;
+     // Spawn food in a wide distribution since boundaries are removed
+     const xRange = 8000; 
      const deepLimit = -2500;
      const surfaceBuffer = 100;
      const surfaceLimit = this.groundY - surfaceBuffer;
-     const y = deepLimit + Math.random() * (surfaceLimit - deepLimit);
+     const MIN_SPAWN_DISTANCE = 300; // Reduced from 500 to encourage density
+     const MAX_RETRIES = 10;
+
+     let x = 0;
+     let y = 0;
+     let valid = false;
+
+     // Attempt to find a valid position away from bots
+     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+         x = (Math.random() - 0.5) * xRange;
+         y = deepLimit + Math.random() * (surfaceLimit - deepLimit);
+         
+         valid = true;
+         for (const bot of this.bots) {
+             if (bot.isDead) continue;
+             const dx = x - bot.centerOfMass.x;
+             const dy = y - bot.centerOfMass.y;
+             if (dx*dx + dy*dy < MIN_SPAWN_DISTANCE * MIN_SPAWN_DISTANCE) {
+                 valid = false;
+                 break;
+             }
+         }
+         
+         if (valid) break;
+     }
 
      this.food.push({
          id: uid(),
@@ -108,7 +131,8 @@ export class PhysicsEngine {
                     const isMuscle = (type1 === CellType.HEART || type2 === CellType.HEART);
                     const isNeuron = (type1 === CellType.NEURON || type2 === CellType.NEURON);
                     
-                    const stiffness = isNeuron ? 0.98 : 0.7; 
+                    // COHESION: Increased stiffness significantly for rigid organism feel
+                    const stiffness = isNeuron ? 1.5 : 1.2; 
 
                     springs.push({
                         p1: p1Idx,
@@ -208,6 +232,26 @@ export class PhysicsEngine {
       absorption: 0
     };
   }
+  
+  getPopulationStats(generation: number): GeneticStats {
+      let skin = 0;
+      let heart = 0;
+      let neuron = 0;
+      
+      this.bots.forEach(bot => {
+          if (bot.isDead) return;
+          bot.genome.genes.forEach(row => {
+              row.forEach(cell => {
+                  if (cell === CellType.SKIN) skin++;
+                  else if (cell === CellType.HEART) heart++;
+                  else if (cell === CellType.NEURON) neuron++;
+              });
+          });
+      });
+      
+      const total = skin + heart + neuron;
+      return { generation, skin, heart, neuron, total };
+  }
 
   evolvePopulation(currentGeneration: number): boolean {
       return false;
@@ -219,17 +263,35 @@ export class PhysicsEngine {
     const botCount = this.bots.length;
     let livingCount = 0;
     let totalMemory = 0;
-
-    if (this.food.length < FOOD_COUNT) {
-        if (Math.random() < 0.1) this.spawnFood();
-    }
+    let totalEnergy = 0;
 
     for(let i = 0; i < botCount; i++) {
         const b = this.bots[i];
         if (!b.isDead) {
             totalMemory += b.genome.bioelectricMemory;
+            totalEnergy += b.energy;
             livingCount++;
         }
+    }
+    
+    // Dynamic Food Spawning
+    const avgEnergy = livingCount > 0 ? totalEnergy / livingCount : 0;
+    let dynamicFoodCap = this.config.foodCount;
+    
+    // Boost food availability if the colony is starving
+    if (avgEnergy < 1000) {
+        dynamicFoodCap *= 1.5;
+    }
+    
+    // Slight scarcity pressure if population gets very large to prevent overcrowding
+    if (livingCount > 100) {
+        dynamicFoodCap *= 0.8;
+    }
+
+    if (this.food.length < dynamicFoodCap) {
+        // Increase spawn probability if energy is low
+        const spawnChance = avgEnergy < 1000 ? 0.6 : 0.2; // Significantly increased base spawn rates
+        if (Math.random() < spawnChance) this.spawnFood();
     }
     
     const avgMemory = livingCount > 0 ? totalMemory / livingCount : 0.5;
@@ -269,7 +331,7 @@ export class PhysicsEngine {
     
     this.smoothRenderPositions();
   }
-
+  
   private triggerMitosis(bot: Xenobot) {
       if (bot.particles.length < 6) return; // Too small to split
 
@@ -319,6 +381,14 @@ export class PhysicsEngine {
   
   // Returns a new bot if a split occurred, null otherwise
   private checkStructuralIntegrity(bot: Xenobot): Xenobot | null {
+      // DYNAMIC STRUCTURAL STRENGTH
+      // Young bots and low energy bots are much harder to break to preserve the colony.
+      
+      const ageFactor = Math.max(1.0, 500.0 / (bot.age + 10)); // Strong when young
+      const energyFactor = bot.energy < 1000 ? 2.0 : 1.0; // Strong when starving
+      const structureMultiplier = ageFactor * energyFactor;
+      const dynamicThreshold = BREAKING_THRESHOLD * structureMultiplier;
+
       // 1. Check for broken springs (Physics Tearing)
       let brokenIndices: number[] = [];
       for(let i = 0; i < bot.springs.length; i++) {
@@ -329,7 +399,7 @@ export class PhysicsEngine {
           const dy = p1.pos.y - p2.pos.y;
           const dist = Math.sqrt(dx*dx + dy*dy);
           
-          if (dist > s.restLength * BREAKING_THRESHOLD) {
+          if (dist > s.restLength * dynamicThreshold) {
               brokenIndices.push(i);
           }
       }
@@ -431,8 +501,9 @@ export class PhysicsEngine {
       const newGenome = mutate(bot.genome);
       newGenome.id = uid();
 
-      // IMPORTANT: Assign a new unique Group ID to the offspring
-      const newGroupId = this.nextGroupId++;
+      // IMPORTANT: Inherit parent's Group ID to maintain colony cohesion
+      // Previously, this created a new ID, causing offspring to be repelled as "enemies".
+      const newGroupId = bot.groupId; 
 
       const newBot: Xenobot = {
           id: uid(),
@@ -443,7 +514,7 @@ export class PhysicsEngine {
           startPosition: { x: 0, y: 0 },
           isDead: false,
           totalCharge: 0,
-          groupId: newGroupId, // Separate entity from parent
+          groupId: newGroupId, // Same family as parent
           energy: bot.energy * 0.5, // Reduced energy
           age: 0, 
           heading: bot.heading + Math.PI + (Math.random() - 0.5), 
@@ -457,9 +528,8 @@ export class PhysicsEngine {
   }
   
   smoothRenderPositions() {
-    const alpha = 0.15; 
+    const alpha = 0.1; // Reduced alpha for smoother interpolation
     const snapThresholdSq = 100 * 100;
-    const sleepThresholdSq = 0.001; 
 
     for (const bot of this.bots) {
         if (bot.isDead) continue;
@@ -474,17 +544,14 @@ export class PhysicsEngine {
             const dy = p.pos.y - p.renderPos.y;
             const distSq = dx*dx + dy*dy;
             
-            // Snap if distance is huge
+            // Snap if distance is huge (teleport/initial spawn)
             if (distSq > snapThresholdSq) {
                 p.renderPos.x = p.pos.x;
                 p.renderPos.y = p.pos.y;
-            } else if (distSq > sleepThresholdSq) {
-                // Lerp: new = current + (target - current) * alpha
+            } else {
+                // Continuous Lerp to smooth out jitter
                 p.renderPos.x += dx * alpha;
                 p.renderPos.y += dy * alpha;
-            } else {
-                p.renderPos.x = p.pos.x;
-                p.renderPos.y = p.pos.y;
             }
         }
     }
@@ -492,6 +559,7 @@ export class PhysicsEngine {
 
   private resolveCollisions(botCount: number) {
       const iterations = 4; 
+      const now = Date.now();
       
       for (let k = 0; k < iterations; k++) {
         for (let i = 0; i < botCount; i++) {
@@ -526,6 +594,16 @@ export class PhysicsEngine {
                             p1.pos.y += ny * separation;
                             p2.pos.x -= nx * separation;
                             p2.pos.y -= ny * separation;
+
+                            // Collision Event for Visuals
+                            if (!b1.lastCollisionTime || now - b1.lastCollisionTime > 500) {
+                                b1.lastCollisionTime = now;
+                                b1.lastCollisionPoint = { x: (p1.pos.x + p2.pos.x) / 2, y: (p1.pos.y + p2.pos.y) / 2 };
+                            }
+                            if (!b2.lastCollisionTime || now - b2.lastCollisionTime > 500) {
+                                b2.lastCollisionTime = now;
+                                b2.lastCollisionPoint = b1.lastCollisionPoint;
+                            }
                         }
                     }
                 }
@@ -536,38 +614,76 @@ export class PhysicsEngine {
 
   private applySocialForces(botCount: number) {
       const GROUP_REPULSION_RADIUS = 500; 
-      const GROUP_FORCE = 3.0; // Increased inter-group repulsion to enforce separation
-      const SELF_REPULSION_RADIUS = 150; 
-      const SELF_FORCE = 0.1; // Decreased intra-group repulsion to encourage clumping
+      const GROUP_FORCE = 6.0; 
+      
+      const SELF_REPULSION_RADIUS = 200; 
+      // Increased Cohesion Radius and Strength for same group
+      const COHESION_RADIUS = 2500; 
+      const ATTRACTION_STRENGTH = 0.55; 
+      const REPULSION_STRENGTH = 1.5; 
 
       for (let i = 0; i < botCount; i++) {
           const b1 = this.bots[i];
           if (b1.isDead) continue;
+          
+          // Bio-field intensity derived from active charge (neurons firing, muscles contracting)
+          const field1 = 0.5 + Math.min(1.5, b1.totalCharge);
 
           for (let j = i + 1; j < botCount; j++) {
               const b2 = this.bots[j];
               if (b2.isDead) continue;
 
+              const field2 = 0.5 + Math.min(1.5, b2.totalCharge);
+              const interaction = field1 * field2;
+
               const dx = b1.centerOfMass.x - b2.centerOfMass.x;
               const dy = b1.centerOfMass.y - b2.centerOfMass.y;
               const distSq = dx*dx + dy*dy;
 
-              if (distSq < 0.1 || distSq > GROUP_REPULSION_RADIUS ** 2) continue; 
+              if (distSq < 0.1 || distSq > COHESION_RADIUS * COHESION_RADIUS) continue; 
 
               const dist = Math.sqrt(distSq);
-              let force = 0;
+              let fx = 0;
+              let fy = 0;
 
               if (b1.groupId !== b2.groupId) {
-                  // Strong Inter-group repulsion for distinct entities
-                  force = ((GROUP_REPULSION_RADIUS - dist) / GROUP_REPULSION_RADIUS) * GROUP_FORCE;
-              } else if (dist < SELF_REPULSION_RADIUS) {
-                  // Intra-group spacing
-                  force = ((SELF_REPULSION_RADIUS - dist) / SELF_REPULSION_RADIUS) * SELF_FORCE;
+                  // Enemy Repulsion
+                  if (dist < GROUP_REPULSION_RADIUS) {
+                      const factor = (GROUP_REPULSION_RADIUS - dist) / GROUP_REPULSION_RADIUS;
+                      // Mental Causation (Irruption) acts as a force multiplier in conflict
+                      const willPower = (b1.irruption + b2.irruption) * 0.5; 
+                      const force = factor * GROUP_FORCE * (1.0 + willPower);
+                      
+                      fx = (dx / dist) * force;
+                      fy = (dy / dist) * force;
+                  }
+              } else {
+                  // Friendly Interaction
+                  if (dist < SELF_REPULSION_RADIUS) {
+                      // Too Close: Push
+                      const factor = (SELF_REPULSION_RADIUS - dist) / SELF_REPULSION_RADIUS;
+                      const force = factor * REPULSION_STRENGTH;
+                      fx = (dx / dist) * force;
+                      fy = (dy / dist) * force;
+                  } else {
+                      // In Range: Cohesion (Pull)
+                      // Normalized distance factor (0 at self-repulsion edge, 1 at cohesion limit)
+                      const range = COHESION_RADIUS - SELF_REPULSION_RADIUS;
+                      const factor = (dist - SELF_REPULSION_RADIUS) / range;
+                      
+                      // Pull strength peaks at medium distance, fades at edges
+                      // Use a sine hump for organic feel
+                      const pullProfile = Math.sin(factor * Math.PI); 
+                      
+                      // Direction is negative (pulling together)
+                      const force = -1.0 * pullProfile * ATTRACTION_STRENGTH * interaction;
+                      
+                      fx = (dx / dist) * force;
+                      fy = (dy / dist) * force;
+                  }
               }
 
-              if (force > 0) {
-                 const fx = (dx / dist) * force;
-                 const fy = (dy / dist) * force;
+              if (Math.abs(fx) > 0.001 || Math.abs(fy) > 0.001) {
                  this.distributeForce(b1, fx, fy);
                  this.distributeForce(b2, -fx, -fy);
               }
@@ -670,10 +786,17 @@ export class PhysicsEngine {
         ciliaForcesX[i] = cx;
         ciliaForcesY[i] = cy;
 
+        // --- DYNAMIC SURFACE TENSION ---
+        // Surface tension adapts to the bot's energy state.
+        // Higher Energy = Tauter (holds shape better). Lower Energy = Looser (deforms).
+        // Range: 0.5x to 1.5x base tension
+        const energyRatio = Math.min(1.0, Math.max(0.1, bot.energy / INITIAL_YOLK_ENERGY));
+        const dynamicTension = SURFACE_TENSION * (0.5 + 0.8 * energyRatio);
+
         const dxSelf = bot.centerOfMass.x - p.pos.x;
         const dySelf = bot.centerOfMass.y - p.pos.y;
-        p.force.x += dxSelf * SURFACE_TENSION;
-        p.force.y += dySelf * SURFACE_TENSION;
+        p.force.x += dxSelf * dynamicTension;
+        p.force.y += dySelf * dynamicTension;
 
         p.charge *= this.config.bioelectricDecay;
     }
@@ -697,31 +820,24 @@ export class PhysicsEngine {
     const energyGained = this.checkFoodConsumption(bot);
     if (energyGained > 0) absorptionEvent += 2.0;
 
-    // --- Boundary Stress Logic ---
-    const distFromCenter = Math.abs(bot.centerOfMass.x);
-    // Boundary zone starts 500 units before the hard limit
-    const boundaryZoneStart = BOUNDARY_LIMIT - 500;
-
-    if (distFromCenter > boundaryZoneStart) {
-        const penetration = distFromCenter - boundaryZoneStart;
-        const stressFactor = penetration / 500; // 0.0 to 1.0+
+    // --- Distance-Based Energy Drain (Open World) ---
+    // Instead of hard boundaries, the world exerts an entropy tax the further you go.
+    const cx = bot.centerOfMass.x;
+    const cy = bot.centerOfMass.y;
+    const distFromOrigin = Math.sqrt(cx*cx + cy*cy);
+    
+    // Base survival cost + Distance Tax
+    // The scale determines how far they can go before it hurts. 
+    // 5000 units is "safe", beyond that it ramps up.
+    const SAFE_RADIUS = 5000;
+    if (distFromOrigin > SAFE_RADIUS) {
+        const excess = distFromOrigin - SAFE_RADIUS;
+        // Exponential decay for far-flung wanderers
+        const entropyTax = (excess / 1000.0) ** 1.5 * 0.05;
+        bot.energy -= entropyTax;
         
-        // Exponential energy cost for staying near edge
-        const stressCost = 1.0 + (stressFactor * stressFactor) * 5.0;
-        bot.energy -= stressCost;
-
-        // Repulsive force pushing back towards center
-        const pushDir = -Math.sign(bot.centerOfMass.x);
-        const pushForce = Math.min(4.0, stressFactor * 2.0);
-        
-        this.distributeForce(bot, pushDir * pushForce, 0);
-        absorptionEvent += 0.5; 
-    }
-
-    if (distFromCenter > BOUNDARY_LIMIT) {
-        // Hard clamp backup (existing logic)
-        const pushDir = -Math.sign(bot.centerOfMass.x);
-        this.distributeForce(bot, pushDir * 2.0, 0);
+        // Slight absorption bump as they sense the void
+        absorptionEvent += Math.min(1.0, entropyTax * 0.1);
     }
 
     return absorptionEvent;
@@ -790,32 +906,44 @@ export class PhysicsEngine {
 
   private calculateCiliaForce(bot: Xenobot, p: Particle, time: number, avgVx: number, avgVy: number) {
       const memory = bot.genome.bioelectricMemory || 0.5;
-      const relX = (p.pos.x - bot.centerOfMass.x) * 0.05;
-      const relY = (p.pos.y - bot.centerOfMass.y) * 0.05;
+      
+      // Calculate Heading Vector
+      const hx = Math.cos(bot.heading);
+      const hy = Math.sin(bot.heading);
+
+      // Relative position from center
+      const relX = (p.pos.x - bot.centerOfMass.x);
+      const relY = (p.pos.y - bot.centerOfMass.y);
+      
+      // COHESION: Increased wavelength to synchronize phase across body better
+      // This reduces shearing forces from cilia beating out of phase
+      const dotProd = relX * hx + relY * hy;
+      const waveLength = 300.0; // Increased from 200
+      const spatialPhase = dotProd / waveLength;
+
       const waveFreq = 3.0 + (memory * 2.0);
       
-      const spatialPhase = p.phase + relX - relY;
-      const beat = Math.sin(spatialPhase - (time * waveFreq * Math.PI * 2));
+      // Metachronal Wave Calculation
+      const beat = Math.sin(spatialPhase * Math.PI - (time * waveFreq * Math.PI * 2));
       
       const thrustMag = beat > 0 
           ? CILIA_FORCE * 2.0 * beat 
-          : CILIA_FORCE * 0.5 * beat;
+          : CILIA_FORCE * 0.2 * beat; // Reduced drag on recovery stroke
 
-      const hx = Math.cos(bot.heading);
-      const hy = Math.sin(bot.heading);
-      
       let cx = thrustMag * hx;
       let cy = thrustMag * hy;
       
+      // Cohesion: Align with group velocity strongly
       const pVx = p.pos.x - p.oldPos.x;
       const pVy = p.pos.y - p.oldPos.y;
-      const cohesionStrength = 3.0 * memory; 
+      const cohesionStrength = 8.0 * memory; // Increased strength for unity
       
       cx += (avgVx - pVx) * cohesionStrength;
       cy += (avgVy - pVy) * cohesionStrength;
 
-      if (memory < 0.8) {
-          const noiseScale = (0.8 - memory);
+      // Add slight randomness only for low memory (low plasticity/learning) bots
+      if (memory < 0.3) {
+          const noiseScale = (0.3 - memory);
           cx += (Math.random() - 0.5) * noiseScale * CILIA_FORCE;
           cy += (Math.random() - 0.5) * noiseScale * CILIA_FORCE;
       }
@@ -825,24 +953,28 @@ export class PhysicsEngine {
   
   private synchronizeCilia(bot: Xenobot, forcesX: Float32Array, forcesY: Float32Array) {
       const springs = bot.springs;
-      const syncStrength = this.config.syncRate || 0.3;
+      // Laplacian Smoothing factor for neighbor force alignment
+      const syncStrength = this.config.syncRate || 0.5;
       
       for (const s of springs) {
           const i1 = s.p1;
           const i2 = s.p2;
 
-          const avgX = (forcesX[i1] + forcesX[i2]) * 0.5;
-          const avgY = (forcesY[i1] + forcesY[i2]) * 0.5;
+          // Get current forces
+          const fx1 = forcesX[i1];
+          const fy1 = forcesY[i1];
+          const fx2 = forcesX[i2];
+          const fy2 = forcesY[i2];
 
-          const diffX1 = avgX - forcesX[i1];
-          const diffY1 = avgY - forcesY[i1];
-          const diffX2 = avgX - forcesX[i2];
-          const diffY2 = avgY - forcesY[i2];
+          // Calculate average force vector between neighbors
+          const avgX = (fx1 + fx2) * 0.5;
+          const avgY = (fy1 + fy2) * 0.5;
 
-          forcesX[i1] += diffX1 * syncStrength;
-          forcesY[i1] += diffY1 * syncStrength;
-          forcesX[i2] += diffX2 * syncStrength;
-          forcesY[i2] += diffY2 * syncStrength;
+          // Blend towards average to reduce local jitter
+          forcesX[i1] += (avgX - fx1) * syncStrength;
+          forcesY[i1] += (avgY - fy1) * syncStrength;
+          forcesX[i2] += (avgX - fx2) * syncStrength;
+          forcesY[i2] += (avgY - fy2) * syncStrength;
       }
   }
 
@@ -855,7 +987,35 @@ export class PhysicsEngine {
       const mSpeed = this.config.muscleSpeed;
       const plasticity = this.config.plasticity;
       
-      const coupling = 0.2 + (memory * 0.3);
+      // COHESION: Increased coupling factor.
+      // This pulls particles towards their neighbor's average force, simulating a rigid lattice.
+      const coupling = 0.9 + (memory * 0.1); 
+
+      // 1. Internal Repulsion (Self-Collision Prevention)
+      // Iterate particles to ensure they don't collapse into a singularity
+      const SELF_NODE_RADIUS_SQ = 15 * 15;
+      for (let i = 0; i < particles.length; i++) {
+          for (let j = i + 1; j < particles.length; j++) {
+              const p1 = particles[i];
+              const p2 = particles[j];
+              const dx = p1.pos.x - p2.pos.x;
+              const dy = p1.pos.y - p2.pos.y;
+              const dSq = dx*dx + dy*dy;
+              if (dSq < SELF_NODE_RADIUS_SQ && dSq > 0.001) {
+                  const dist = Math.sqrt(dSq);
+                  const overlap = 15 - dist;
+                  const force = overlap * 0.5; // Stronger repulsion to prevent collapse
+                  const nx = dx / dist;
+                  const ny = dy / dist;
+                  
+                  p1.force.x += nx * force;
+                  p1.force.y += ny * force;
+                  p2.force.x -= nx * force;
+                  p2.force.y -= ny * force;
+              }
+          }
+      }
+
       for (const s of springs) {
           const p1 = particles[s.p1];
           const p2 = particles[s.p2];
@@ -867,6 +1027,29 @@ export class PhysicsEngine {
           p1.force.y += (avgFy - p1.force.y) * coupling;
           p2.force.x += (avgFx - p2.force.x) * coupling;
           p2.force.y += (avgFy - p2.force.y) * coupling;
+      }
+
+      // **NEW**: Stronger Internal Damping / Velocity Influence
+      // This loop adds forces to harmonize velocities of connected nodes
+      for (const s of springs) {
+          const p1 = particles[s.p1];
+          const p2 = particles[s.p2];
+          
+          const v1x = p1.pos.x - p1.oldPos.x;
+          const v1y = p1.pos.y - p1.oldPos.y;
+          const v2x = p2.pos.x - p2.oldPos.x;
+          const v2y = p2.pos.y - p2.oldPos.y;
+
+          const dvx = v2x - v1x;
+          const dvy = v2y - v1y;
+          
+          // COHESION: Apply full vector damping to enforce rigid body motion
+          const dampingCoeff = 0.8; 
+
+          p1.force.x += dvx * dampingCoeff;
+          p1.force.y += dvy * dampingCoeff;
+          p2.force.x -= dvx * dampingCoeff;
+          p2.force.y -= dvy * dampingCoeff;
       }
 
       for (const s of springs) {
@@ -960,10 +1143,8 @@ export class PhysicsEngine {
               const vy_impact = (p.pos.y - p.oldPos.y);
               p.oldPos.y = p.pos.y + vy_impact * 0.6; 
           }
-          if (p.pos.y < -3000) {
-              p.pos.y = -3000;
-              p.oldPos.y = p.pos.y;
-          }
+          // Removed Hard Ceiling/Depth Clamps to allow free exploration
+          // Gravity and Entropy Tax (in performAbsorption) now manage bounds.
 
           cx += p.pos.x;
           cy += p.pos.y;

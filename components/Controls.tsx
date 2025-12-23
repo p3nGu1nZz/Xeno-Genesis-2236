@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Play, Pause, Zap, Activity, Settings, PanelLeftClose, PanelLeftOpen, Dna } from 'lucide-react';
+import { Play, Pause, Zap, Activity, Settings, PanelLeftClose, PanelLeftOpen, Dna, Network, TrendingUp } from 'lucide-react';
 
 interface ControlsProps {
   isRunning: boolean;
@@ -15,6 +15,9 @@ interface ControlsProps {
   onToggleCollapse: () => void;
   showGenomePanel: boolean;
   onToggleGenomePanel: () => void;
+  onToggleMomBot: () => void;
+  showDriftPanel: boolean;
+  onToggleDriftPanel: () => void;
 }
 
 export const Controls: React.FC<ControlsProps> = ({
@@ -26,7 +29,10 @@ export const Controls: React.FC<ControlsProps> = ({
   isCollapsed,
   onToggleCollapse,
   showGenomePanel,
-  onToggleGenomePanel
+  onToggleGenomePanel,
+  onToggleMomBot,
+  showDriftPanel,
+  onToggleDriftPanel
 }) => {
   return (
     <>
@@ -82,12 +88,28 @@ export const Controls: React.FC<ControlsProps> = ({
               </button>
 
               <div className="flex flex-col gap-4 mt-auto mb-4">
+                   <button 
+                      onClick={onToggleMomBot}
+                      className="p-2 text-neon-magenta hover:text-white transition-colors"
+                      title="MomBot Neuralink Interface"
+                  >
+                      <Network size={20} />
+                  </button>
+
                   <button 
                       onClick={onToggleGenomePanel}
                       className={`p-2 rounded transition-all ${showGenomePanel ? 'text-neon-cyan bg-neon-cyan/10 border border-neon-cyan/50' : 'text-slate-600 border border-transparent'}`}
                       title="Open Genome Database"
                   >
                       <Dna size={20} />
+                  </button>
+                  
+                  <button 
+                      onClick={onToggleDriftPanel}
+                      className={`p-2 rounded transition-all ${showDriftPanel ? 'text-neon-cyan bg-neon-cyan/10 border border-neon-cyan/50' : 'text-slate-600 border border-transparent'}`}
+                      title="Genetic Drift Analysis"
+                  >
+                      <TrendingUp size={20} />
                   </button>
                   
                   <button 
@@ -152,21 +174,42 @@ export const Controls: React.FC<ControlsProps> = ({
                       </div>
                   </div>
 
-                  {/* Single Genome Monitor Button */}
+                   {/* MomBot Neuralink Button */}
                   <button 
-                      onClick={onToggleGenomePanel}
-                      className={`w-full p-4 rounded border flex flex-col items-center gap-2 transition-all group ${
-                          showGenomePanel 
-                          ? 'bg-neon-cyan/10 border-neon-cyan/50 text-neon-cyan' 
-                          : 'bg-slate-950 border-slate-800 text-slate-500 hover:border-slate-600 hover:bg-slate-900'
-                      }`}
+                      onClick={onToggleMomBot}
+                      className="w-full p-3 rounded border border-neon-magenta/30 bg-neon-magenta/5 hover:bg-neon-magenta/10 text-neon-magenta flex items-center justify-center gap-3 transition-all group"
                   >
-                      <div className="flex items-center gap-3">
-                          <Dna size={24} className={showGenomePanel ? "animate-pulse" : ""} />
-                          <span className="font-bold text-sm tracking-wider group-hover:text-white transition-colors">GENOME DATABASE</span>
-                      </div>
-                      <span className="text-[10px] opacity-70">VIEW ACTIVE NEURAL GROUPS</span>
+                      <Network size={20} className="group-hover:animate-pulse" />
+                      <span className="font-bold text-sm tracking-wider">NEURALINK: MOMBOT</span>
                   </button>
+
+                  <div className="grid grid-cols-2 gap-2">
+                      {/* Genome Monitor Button */}
+                      <button 
+                          onClick={onToggleGenomePanel}
+                          className={`p-3 rounded border flex flex-col items-center gap-2 transition-all group ${
+                              showGenomePanel 
+                              ? 'bg-neon-cyan/10 border-neon-cyan/50 text-neon-cyan' 
+                              : 'bg-slate-950 border-slate-800 text-slate-500 hover:border-slate-600 hover:bg-slate-900'
+                          }`}
+                      >
+                          <Dna size={20} className={showGenomePanel ? "animate-pulse" : ""} />
+                          <span className="text-[10px] font-bold">GENOMES</span>
+                      </button>
+
+                      {/* Drift Analysis Button */}
+                      <button 
+                          onClick={onToggleDriftPanel}
+                          className={`p-3 rounded border flex flex-col items-center gap-2 transition-all group ${
+                              showDriftPanel 
+                              ? 'bg-neon-cyan/10 border-neon-cyan/50 text-neon-cyan' 
+                              : 'bg-slate-950 border-slate-800 text-slate-500 hover:border-slate-600 hover:bg-slate-900'
+                          }`}
+                      >
+                          <TrendingUp size={20} />
+                          <span className="text-[10px] font-bold">DRIFT</span>
+                      </button>
+                  </div>
 
                   <div className="bg-slate-950 p-4 rounded border border-slate-800">
                   <div className="flex items-center gap-2 text-neon-green mb-2">

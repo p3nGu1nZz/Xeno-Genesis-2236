@@ -5,10 +5,12 @@ import { SimulationCanvas } from './components/SimulationCanvas';
 import { Controls } from './components/Controls';
 import { AnalysisPanel } from './components/AnalysisPanel';
 import { GenomePanel } from './components/GenomePanel';
+import { MomBotPanel } from './components/MomBotPanel';
 import { TitleScreen } from './components/TitleScreen';
 import { SettingsPanel } from './components/SettingsPanel';
 import { HelpModal } from './components/HelpModal';
-import { Xenobot, Genome, AnalysisResult, CameraState, SimulationConfig, Food } from './types';
+import { DriftPanel } from './components/DriftPanel';
+import { Xenobot, Genome, AnalysisResult, CameraState, SimulationConfig, Food, GeneticStats } from './types';
 import { DEFAULT_CONFIG, EVOLUTION_INTERVAL } from './constants';
 import { ScanEye } from 'lucide-react';
 import { PhysicsEngine } from './services/physicsEngine';
@@ -29,7 +31,14 @@ const App: React.FC = () => {
   
   // Genome Visibility State
   const [showGenomePanel, setShowGenomePanel] = useState(false);
+  const [showDriftPanel, setShowDriftPanel] = useState(false);
   
+  // MomBot Interface State
+  const [showMomBotPanel, setShowMomBotPanel] = useState(false);
+  
+  // Genetic History
+  const [geneticHistory, setGeneticHistory] = useState<GeneticStats[]>([]);
+
   // Simulation Engine State (Main Thread)
   const engineRef = useRef<PhysicsEngine | null>(null);
   const populationRef = useRef<Genome[]>([]);
@@ -41,11 +50,12 @@ const App: React.FC = () => {
   const foodRef = useRef<Food[]>([]);
   
   // Dynamic list of representative genomes for the panel
-  // Now includes energy field
-  const [activeGenomeGroups, setActiveGenomeGroups] = useState<{name: string, genome: Genome | null, color: string, energy: number}[]>([]);
+  // Now includes energy field and botId for camera tracking
+  const [activeGenomeGroups, setActiveGenomeGroups] = useState<{name: string, genome: Genome | null, color: string, energy: number, botId?: string}[]>([]);
   
   // Camera State
   const [camera, setCamera] = useState<CameraState>({ x: 0, y: 0, zoom: 0.55 });
+  const [followingBotId, setFollowingBotId] = useState<string | null>(null);
   const keysPressed = useRef<Set<string>>(new Set());
   const lastInputTimeRef = useRef<number>(Date.now());
   const isAutoCameraRef = useRef<boolean>(true);
@@ -108,12 +118,18 @@ const App: React.FC = () => {
     foodRef.current = engine.food;
     evolutionTimerRef.current = 0;
     setEvolutionProgress(0);
+    setFollowingBotId(null);
+    setGeneticHistory([]); // Reset history on init
   }, []);
 
   const evolveContinuous = () => {
       const engine = engineRef.current;
       if (!engine) return;
       
+      // Capture Stats before mutation for the finishing generation
+      const stats = engine.getPopulationStats(generation);
+      setGeneticHistory(prev => [...prev, stats]);
+
       // Perform evolution step
       const evolutionOccurred = engine.evolvePopulation(generation);
   
@@ -152,7 +168,8 @@ const App: React.FC = () => {
             name: "NATIVE STRAIN (ALPHA)",
             genome: bestNative.genome,
             color: bestNative.genome.color,
-            energy: totalEnergy
+            energy: totalEnergy,
+            botId: bestNative.id
         });
     }
 
@@ -163,14 +180,13 @@ const App: React.FC = () => {
             name: "INVASIVE STRAIN (BETA)",
             genome: bestInvader.genome,
             color: bestInvader.genome.color,
-            energy: totalEnergy
+            energy: totalEnergy,
+            botId: bestInvader.id
         });
     }
     
     // For mutants, we group by ID to avoid clutter if many splits happen
-    // Just showing the most prominent mutant group for now or an aggregate
     if (mutants.length > 0) {
-        // Group mutants by groupId
         const mutantGroups = new Map<number, Xenobot[]>();
         mutants.forEach(b => {
             if (!mutantGroups.has(b.groupId)) mutantGroups.set(b.groupId, []);
@@ -185,7 +201,8 @@ const App: React.FC = () => {
                 name: `MUTANT COLONY ${gId}`,
                 genome: bestMutant.genome,
                 color: bestMutant.genome.color,
-                energy: totalEnergy
+                energy: totalEnergy,
+                botId: bestMutant.id
             });
         });
     }
@@ -234,6 +251,7 @@ const App: React.FC = () => {
       if (keysPressed.current.size > 0) {
           isAutoCameraRef.current = false;
           lastInputTimeRef.current = now;
+          setFollowingBotId(null);
           
           let dx = 0, dy = 0;
           const speed = 15 / camera.zoom;
@@ -247,46 +265,47 @@ const App: React.FC = () => {
               setCamera(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
           }
       } 
-      // Auto Follow Logic (Refined)
+      // Auto Follow Logic (With Selection Support)
       else if (isAutoCameraRef.current && isRunning) {
-          // Filter for Group A (groupId === 0) for primary follow logic
-          const groupA = engine.bots.filter(b => !b.isDead && b.groupId === 0);
+          let targetBot: Xenobot | undefined;
+
+          // 1. If following a specific selected bot
+          if (followingBotId) {
+             targetBot = engine.bots.find(b => b.id === followingBotId && !b.isDead);
+             // If selected bot died, fall back to default behavior below
+          }
           
-          // Fallback to any alive bots if Group A is extinct
-          const targetBots = groupA.length > 0 ? groupA : engine.bots.filter(b => !b.isDead);
-
-          if (targetBots.length > 0) {
-              let avgX = 0, avgY = 0;
-              let count = 0;
-              
-              // Sort by energy to prioritize healthy individuals in the center
-              const sorted = [...targetBots].sort((a,b) => b.energy - a.energy);
-              const topView = sorted.slice(0, Math.min(5, sorted.length));
-
-              topView.forEach(b => { 
-                  avgX += b.centerOfMass.x; 
-                  avgY += b.centerOfMass.y; 
-                  count++;
-              });
-              
-              if (count > 0) {
-                  avgX /= count;
-                  avgY /= count;
-
-                  // TARGET: Keep group center at 40% of screen width (Left Side bias)
-                  const offset = (dimensions.width * 0.1) / camera.zoom;
-                  const targetCamX = avgX + offset; 
-                  const targetCamY = avgY;
-                  
-                  // Reduced lerp for smoother catch-up
-                  const lerp = 0.02; 
-                  
-                  setCamera(prev => ({
-                      ...prev,
-                      x: prev.x + (targetCamX - prev.x) * lerp,
-                      y: prev.y + (targetCamY - prev.y) * lerp,
-                  }));
+          // 2. Default Behavior: Follow Leader of Group A (Natives)
+          if (!targetBot) {
+              const groupA = engine.bots.filter(b => !b.isDead && b.groupId === 0);
+              if (groupA.length > 0) {
+                  // Find highest energy bot in Group A
+                  targetBot = groupA.reduce((prev, curr) => (curr.energy > prev.energy ? curr : prev));
+              } else {
+                  // Fallback: Any living bot
+                  targetBot = engine.bots.find(b => !b.isDead);
               }
+          }
+
+          if (targetBot) {
+             // Offset logic: Keep bot in the left ~35% of the screen
+             // Screen Width = dimensions.width
+             // Center = 0.5 * width
+             // Target Visual Position = 0.35 * width
+             // Offset required from center = (0.5 - 0.35) * width = 0.15 * width
+             // Camera X (Center) = Bot X + (Offset / Zoom)
+             const offsetX = (dimensions.width * 0.15) / camera.zoom;
+
+             const targetCamX = targetBot.centerOfMass.x + offsetX;
+             const targetCamY = targetBot.centerOfMass.y;
+             
+             const lerp = 0.05; 
+             
+             setCamera(prev => ({
+                 ...prev,
+                 x: prev.x + (targetCamX - prev.x) * lerp,
+                 y: prev.y + (targetCamY - prev.y) * lerp,
+             }));
           }
       }
 
@@ -296,7 +315,7 @@ const App: React.FC = () => {
   useEffect(() => {
     requestRef.current = requestAnimationFrame(simulationLoop);
     return () => cancelAnimationFrame(requestRef.current);
-  }, [isRunning, camera, dimensions]);
+  }, [isRunning, camera, dimensions, followingBotId]);
 
   // Window Resize
   useEffect(() => {
@@ -339,10 +358,11 @@ const App: React.FC = () => {
      
      const engine = engineRef.current;
      if (engine) {
-         // Analyze the top genome from the first group for now
-         const targetGenome = activeGenomeGroups[0].genome;
-         if (targetGenome) {
-            const bot = engine.bots.find(b => b.genome.id === targetGenome.id);
+         // Analyze the currently followed bot if exists, else the top group
+         const targetId = followingBotId || activeGenomeGroups[0]?.botId;
+         
+         if (targetId) {
+            const bot = engine.bots.find(b => b.id === targetId);
             if (bot) {
                 const result = await analyzeXenobot(bot);
                 setAnalysisResult(result);
@@ -365,6 +385,7 @@ const App: React.FC = () => {
             height={dimensions.height}
             groundY={config.groundHeight}
             camera={camera}
+            followingBotId={followingBotId}
           />
           
           <div className="absolute top-0 left-0 bottom-0 z-30">
@@ -382,10 +403,14 @@ const App: React.FC = () => {
                 // Single toggle for the new panel
                 showGenomePanel={showGenomePanel}
                 onToggleGenomePanel={() => setShowGenomePanel(!showGenomePanel)}
+                onToggleMomBot={() => setShowMomBotPanel(!showMomBotPanel)}
+                showDriftPanel={showDriftPanel}
+                onToggleDriftPanel={() => setShowDriftPanel(!showDriftPanel)}
              />
           </div>
           
           <AnalysisPanel result={analysisResult} onClose={() => setAnalysisResult(null)} />
+          <DriftPanel isOpen={showDriftPanel} onClose={() => setShowDriftPanel(false)} history={geneticHistory} />
           
           {showSettings && (
              <SettingsPanel 
@@ -412,6 +437,7 @@ const App: React.FC = () => {
           )}
 
           <HelpModal open={showHelp} onClose={() => setShowHelp(false)} />
+          <MomBotPanel isOpen={showMomBotPanel} onClose={() => setShowMomBotPanel(false)} />
           
           <div className="absolute bottom-6 right-6 flex gap-4">
               <button onClick={() => setShowHelp(true)} className="p-2 bg-slate-800 rounded-full text-slate-400 hover:text-white border border-slate-600">
@@ -423,6 +449,11 @@ const App: React.FC = () => {
               genomes={activeGenomeGroups}
               hidden={!showGenomePanel}
               onClose={() => setShowGenomePanel(false)}
+              onSelect={(botId) => {
+                  setFollowingBotId(botId);
+                  // Ensure auto camera is on to engage follow logic
+                  isAutoCameraRef.current = true;
+              }}
           />
         </div>
       )}

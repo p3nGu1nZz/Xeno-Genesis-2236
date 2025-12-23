@@ -1,3 +1,4 @@
+
 import React, { useRef, useEffect, useLayoutEffect } from 'react';
 import { Xenobot, CameraState, Food } from '../types';
 import { COLORS, FOOD_RADIUS } from '../constants';
@@ -123,15 +124,17 @@ interface SimulationCanvasProps {
   height: number;
   groundY: number;
   camera: CameraState;
+  followingBotId: string | null;
 }
 
-export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foodRef, width, height, groundY, camera }) => {
+export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foodRef, width, height, groundY, camera, followingBotId }) => {
   const canvas2dRef = useRef<HTMLCanvasElement>(null);
   const canvasGlRef = useRef<HTMLCanvasElement>(null);
   const glContextRef = useRef<WebGLRenderingContext | null>(null);
   const programRef = useRef<WebGLProgram | null>(null);
   const startTimeRef = useRef<number>(Date.now());
   const requestRef = useRef<number>(0);
+  const mouseRef = useRef<{x: number, y: number} | null>(null);
 
   // Buffers for WebGL
   const particleBufferRef = useRef<Float32Array>(new Float32Array(MAX_PARTICLES * 4));
@@ -179,6 +182,17 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foo
     gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
   }, []);
 
+  const handleMouseMove = (e: React.MouseEvent) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      mouseRef.current = { x, y };
+  };
+
+  const handleMouseLeave = () => {
+      mouseRef.current = null;
+  };
+
   // --- Main Render Loop (Decoupled from React State) ---
   const render = () => {
     const bots = botsRef.current;
@@ -200,6 +214,26 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foo
       ctx.translate(width/2, height/2); 
       ctx.scale(safeZoom, safeZoom);
       ctx.translate(-camera.x, -camera.y);
+
+      // Determine Hovered Bot
+      let hoveredBotId: string | null = null;
+      if (mouseRef.current) {
+          const worldMx = (mouseRef.current.x - width/2) / safeZoom + camera.x;
+          const worldMy = (mouseRef.current.y - height/2) / safeZoom + camera.y;
+          
+          // Simple proximity check for hover
+          let minDistSq = Infinity;
+          for(const b of bots) {
+              if (b.isDead) continue;
+              const dx = b.centerOfMass.x - worldMx;
+              const dy = b.centerOfMass.y - worldMy;
+              const dSq = dx*dx + dy*dy;
+              if (dSq < 2500 && dSq < minDistSq) { // 50px radius
+                  minDistSq = dSq;
+                  hoveredBotId = b.id;
+              }
+          }
+      }
 
       // Grid
       ctx.strokeStyle = 'rgba(0, 243, 255, 0.05)';
@@ -259,6 +293,16 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foo
         const springs = bot.springs;
         const sCount = springs.length;
         const particles = bot.particles;
+
+        // Collision Visual Effect
+        if (bot.lastCollisionTime && Date.now() - bot.lastCollisionTime < 200 && bot.lastCollisionPoint) {
+            const p = bot.lastCollisionPoint;
+            const progress = (Date.now() - bot.lastCollisionTime) / 200;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 5 + progress * 30, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(255, 255, 255, ${1.0 - progress})`;
+            ctx.fill();
+        }
 
         // Visualizing Absorption (Conscious Experience)
         if (bot.absorption > 0.1) {
@@ -323,14 +367,22 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foo
 
         let activeColor = genomeColor;
         const chargeDensity = bot.totalCharge / (pCount || 1);
-        if (chargeDensity > 0.05) {
-            const match = genomeColor.match(/hsl\((\d+\.?\d*),\s*(\d+)%,\s*(\d+)%\)/);
-            if (match) {
-                const h = match[1];
-                const s = Math.min(100, parseInt(match[2]) + chargeDensity * 50);
-                const l = Math.min(95, parseInt(match[3]) + chargeDensity * 40);
-                activeColor = `hsl(${h}, ${s}%, ${l}%)`;
+        
+        const match = genomeColor.match(/hsl\((\d+\.?\d*),\s*(\d+)%,\s*(\d+)%\)/);
+        if (match) {
+            const h = match[1];
+            let s = Math.min(100, parseInt(match[2]) + chargeDensity * 50);
+            let l = Math.min(95, parseInt(match[3]) + chargeDensity * 40);
+            
+            // Visual Cue: Aging / Dying
+            // If energy is low (< 800), desaturate and darken
+            if (bot.energy < 800) {
+                 const deathFactor = 1.0 - (Math.max(0, bot.energy) / 800);
+                 s = s * (1.0 - deathFactor); 
+                 l = l * (1.0 - deathFactor * 0.5);
             }
+
+            activeColor = `hsl(${h}, ${s}%, ${l}%)`;
         }
 
         for (let j = 0; j < pCount; j++) {
@@ -338,6 +390,15 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foo
             if (!Number.isFinite(p.renderPos.x) || !Number.isFinite(p.renderPos.y)) continue;
             
             ctx.fillStyle = activeColor;
+            
+            // Visual Cue: Pulsating effect for critical energy (< 300)
+            if (bot.energy < 300) {
+                 const pulse = 0.5 + 0.5 * Math.sin(Date.now() * 0.01);
+                 ctx.globalAlpha = 0.5 + pulse * 0.5;
+            } else {
+                 ctx.globalAlpha = 1.0;
+            }
+            
             ctx.beginPath();
             ctx.arc(p.renderPos.x, p.renderPos.y, 8, 0, Math.PI * 2); 
             ctx.fill();
@@ -358,6 +419,30 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foo
                 ctx.fill();
                 ctx.shadowBlur = 0;
             }
+            
+            // Reset Alpha
+            ctx.globalAlpha = 1.0;
+        }
+
+        // Render Age Text (Visible if selected or hovered)
+        if (bot.id === followingBotId || bot.id === hoveredBotId) {
+            ctx.save();
+            ctx.translate(bot.centerOfMass.x, bot.centerOfMass.y - 60);
+            ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+            ctx.beginPath();
+            ctx.roundRect(-40, -15, 80, 26, 4);
+            ctx.fill();
+            
+            ctx.font = "12px monospace";
+            ctx.fillStyle = "#fff";
+            ctx.textAlign = "center";
+            ctx.fillText(`AGE: ${bot.age}`, 0, 0);
+            
+            ctx.font = "10px monospace";
+            ctx.fillStyle = bot.energy < 500 ? "#ef4444" : "#39ff14";
+            ctx.fillText(`${Math.floor(bot.energy)}J`, 0, 12); // Reduced from "NRG"
+            
+            ctx.restore();
         }
       }
       ctx.restore();
@@ -463,7 +548,7 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foo
   useLayoutEffect(() => {
     requestRef.current = requestAnimationFrame(render);
     return () => cancelAnimationFrame(requestRef.current);
-  }, [width, height, groundY, camera]); 
+  }, [width, height, groundY, camera, followingBotId]); 
 
   return (
     <div className="absolute inset-0 z-0 overflow-hidden" 
@@ -471,7 +556,10 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foo
              width, 
              height, 
              background: 'linear-gradient(to bottom, #020617 -50%, #0f172a 50%, #020617 150%)'
-         }}>
+         }}
+         onMouseMove={handleMouseMove}
+         onMouseLeave={handleMouseLeave}
+    >
        <canvas 
           ref={canvasGlRef}
           width={width}

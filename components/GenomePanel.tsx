@@ -4,13 +4,22 @@ import { Genome } from '../types';
 import { GenomeVisualizer } from './GenomeVisualizer';
 import { ArrowLeft, Dna, Activity, X, Zap } from 'lucide-react';
 
-interface GenomePanelProps {
-  genomes: { name: string; genome: Genome | null; color: string; energy: number }[];
-  hidden: boolean;
-  onClose: () => void;
+interface GenomeGroupData {
+  name: string;
+  genome: Genome | null;
+  color: string;
+  energy: number;
+  botId?: string;
 }
 
-export const GenomePanel: React.FC<GenomePanelProps> = ({ genomes, hidden, onClose }) => {
+interface GenomePanelProps {
+  genomes: GenomeGroupData[];
+  hidden: boolean;
+  onClose: () => void;
+  onSelect?: (botId: string) => void;
+}
+
+export const GenomePanel: React.FC<GenomePanelProps> = ({ genomes, hidden, onClose, onSelect }) => {
   const [selectedGenomeIndex, setSelectedGenomeIndex] = useState<number | null>(null);
 
   if (hidden) return null;
@@ -70,7 +79,10 @@ export const GenomePanel: React.FC<GenomePanelProps> = ({ genomes, hidden, onClo
                         {genomes.map((g, idx) => (
                             <button
                                 key={idx}
-                                onClick={() => setSelectedGenomeIndex(idx)}
+                                onClick={() => {
+                                    setSelectedGenomeIndex(idx);
+                                    if (onSelect && g.botId) onSelect(g.botId);
+                                }}
                                 disabled={!g.genome}
                                 className={`flex flex-col items-start gap-2 p-3 rounded border transition-all text-left group relative overflow-hidden h-full ${
                                     g.genome 

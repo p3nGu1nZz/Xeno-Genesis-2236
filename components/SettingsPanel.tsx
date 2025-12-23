@@ -116,6 +116,19 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
              <div className="space-y-1">
                 <div className="flex justify-between">
+                    <span>Food Source Abundance</span>
+                    <span className="text-neon-green">{localConfig.foodCount}</span>
+                </div>
+                <input 
+                    type="range" min="10" max="200" step="5"
+                    value={localConfig.foodCount}
+                    onChange={(e) => handleChange('foodCount', parseInt(e.target.value))}
+                    className="w-full accent-neon-green h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer"
+                />
+             </div>
+
+             <div className="space-y-1">
+                <div className="flex justify-between">
                     <span>Xenobot Scale</span>
                     <span className="text-neon-cyan">{localConfig.gridScale}px</span>
                 </div>

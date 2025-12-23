@@ -64,6 +64,8 @@ export interface Xenobot {
   heading: number; // Current movement direction angle
   irruption: number; // Mental Causation: Magnitude of internal will exerted on matter
   absorption: number; // Conscious Experience: Magnitude of material events integrated into mind
+  lastCollisionTime?: number;
+  lastCollisionPoint?: Point;
 }
 
 export interface Food {
@@ -77,6 +79,7 @@ export interface Food {
 export interface SimulationConfig {
   populationSize: number; 
   maxPopulationSize: number; 
+  foodCount: number;
   gravity: number;
   friction: number;
   muscleStrength: number;
@@ -100,6 +103,14 @@ export interface SaveData {
   population: Genome[];
   generation: number;
   timestamp: number;
+}
+
+export interface GeneticStats {
+  generation: number;
+  skin: number;
+  heart: number;
+  neuron: number;
+  total: number;
 }
 
 // --- Worker Types ---

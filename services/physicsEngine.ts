@@ -47,7 +47,7 @@ export class PhysicsEngine {
   public spawnFood() {
     const currentCount = this.food.length;
     const needed = this.config.foodCount - currentCount;
-    const range = 2500; 
+    const range = 8000; // Significantly expanded world size
 
     // Uniformly scatter food to avoid confusion with bot clusters
     for (let i = 0; i < needed; i++) {
@@ -251,13 +251,43 @@ export class PhysicsEngine {
 
   private checkFoodConsumption(bot: Xenobot): number {
       let energyGained = 0;
+      const scale = this.config.gridScale || 60;
+      // Broadphase optimization: Max potential radius of bot + buffer
+      // (Half Grid * Scale * Diagonal Factor) + Buffer
+      const maxRadius = (GRID_SIZE / 2) * scale * 1.5 + 100;
+      const broadphaseSq = maxRadius * maxRadius;
+      
+      // Interaction radius for eating (Food Radius 15 + Particle Radius ~8 + Tolerance)
+      const eatDistSq = 900; // 30px radius squared
+
       for (let i = this.food.length - 1; i >= 0; i--) {
           const f = this.food[i];
           const dx = bot.centerOfMass.x - f.x;
           const dy = bot.centerOfMass.y - f.y;
           const dSq = dx*dx + dy*dy;
           
-          if (dSq < 900) { 
+          // Broadphase: Skip if food is clearly out of range
+          if (dSq > broadphaseSq) continue;
+          
+          let consumed = false;
+
+          // 1. Check Center of Mass (Fast check for dense/small bots)
+          if (dSq < eatDistSq) { 
+              consumed = true;
+          } else {
+              // 2. Check Individual Particles (Accurate collision for morphology)
+              for (let j = 0; j < bot.particles.length; j++) {
+                  const p = bot.particles[j];
+                  const pdx = p.pos.x - f.x;
+                  const pdy = p.pos.y - f.y;
+                  if (pdx*pdx + pdy*pdy < eatDistSq) {
+                      consumed = true;
+                      break;
+                  }
+              }
+          }
+          
+          if (consumed) { 
               bot.energy += f.energy;
               energyGained += f.energy;
               this.food.splice(i, 1);
@@ -335,6 +365,8 @@ export class PhysicsEngine {
           p1.force.y += (avgFy - p1.force.y) * coupling;
           p2.force.x += (avgFx - p2.force.x) * coupling;
           p2.force.y += (avgFy - p2.force.y) * coupling;
+          p2.force.x += (avgFx - p2.force.x) * coupling;
+          p2.force.y += (avgFy - p2.force.y) * coupling;
       }
 
       // 3. Stronger Internal Damping / Velocity Influence
@@ -386,12 +418,12 @@ export class PhysicsEngine {
           const forceVal = (s.stiffness * 131.22 * 1.2) * diff;
 
           const stress = Math.abs(diff); 
-          const chargeGen = stress * 0.9; // Increased from 0.6 for more intense field generation
+          const chargeGen = stress * 4.0; 
           
-          if (chargeGen > 0.01) {
-              // Allowed to go over 1.0 slightly to drive bloom/distortion effects
-              p1.charge = Math.min(1.5, p1.charge + chargeGen);
-              p2.charge = Math.min(1.5, p2.charge + chargeGen);
+          if (chargeGen > 0.005) {
+              // Increased max capacity to 10.0 to allow for extremely high-intensity fields
+              p1.charge = Math.min(10.0, p1.charge + chargeGen);
+              p2.charge = Math.min(10.0, p2.charge + chargeGen);
           }
           activeCharge += (p1.charge + p2.charge);
 
@@ -472,8 +504,8 @@ export class PhysicsEngine {
         const vy = (p.pos.y - p.oldPos.y);
         
         // Bioelectric charge increases local viscosity (simulating mucus/secretion)
-        // Adjusted multiplier for more physical impact of charge
-        const viscosityMod = 1.0 + (p.charge * 3.0);
+        // Significantly boosted physical impact of high charge for visual effect
+        const viscosityMod = 1.0 + (p.charge * 15.0);
         
         // Apply structural modifier
         const dragFactor = BASE_DRAG * viscosityMod * structuralDragMod;
@@ -501,7 +533,8 @@ export class PhysicsEngine {
         p.force.x += dxSelf * dynamicTension;
         p.force.y += dySelf * dynamicTension;
 
-        p.charge *= this.config.bioelectricDecay;
+        // Apply decay. Extremely slow for persistent trails.
+        p.charge *= 0.9999;
     }
 
     // Apply Cilia Forces

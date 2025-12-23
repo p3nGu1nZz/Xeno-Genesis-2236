@@ -1,4 +1,3 @@
-
 import { PhysicsEngine } from './services/physicsEngine';
 import { createRandomGenome } from './services/geneticAlgorithm';
 import { SimulationConfig, Xenobot, Genome, WorkerMessage } from './types';
@@ -77,7 +76,7 @@ const initSimulation = (config: SimulationConfig, startPop?: Genome[], startGen?
        const hue = match ? parseFloat(match[1]) : 0;
        const isGroupA = (hue > 150 && hue < 230);
        
-       startX = isGroupA ? -1200 : 1200; 
+       startX = isGroupA ? -5000 : 5000; 
        startX += (Math.random() - 0.5) * 150; 
        g.originX = startX;
     }

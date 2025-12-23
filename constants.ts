@@ -4,7 +4,7 @@ export const INITIAL_POPULATION_SIZE = 2;
 export const MAX_POPULATION_CAP = 10000; 
 export const GRID_SIZE = 6; 
 export const EVOLUTION_INTERVAL = 3600; // 60 seconds at 60fps
-export const DEFAULT_FOOD_COUNT = 500; // High food count for foraging density
+export const DEFAULT_FOOD_COUNT = 4000; // Increased to maintain density with larger map
 
 export const DEFAULT_CONFIG: SimulationConfig = {
   populationSize: INITIAL_POPULATION_SIZE,
@@ -16,7 +16,7 @@ export const DEFAULT_CONFIG: SimulationConfig = {
   muscleSpeed: 0.1, 
   groundHeight: 0, // Irrelevant in infinite top-down plane
   gridScale: 60, // Reduced from 100 to 60 for more coherent, manageable bot sizes
-  bioelectricDecay: 0.98,
+  bioelectricDecay: 0.999, // Much slower decay for persistent field trails
   plasticity: 0.0005, 
   syncRate: 0.4, 
   generationDuration: 0, 

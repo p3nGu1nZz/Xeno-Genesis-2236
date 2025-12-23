@@ -1,4 +1,3 @@
-
 import React, { useRef, useEffect, useLayoutEffect } from 'react';
 import { Xenobot, CameraState, Food } from '../types';
 import { COLORS, FOOD_RADIUS } from '../constants';
@@ -55,10 +54,9 @@ const FS_SOURCE = `
     vec2 pixelCoord = gl_FragCoord.xy;
     
     // Scale field physics with zoom
-    // We want the field radius to look consistent relative to the bot size
     float zoomScale = max(0.1, u_zoom);
-    // Base radius reduced for tighter, sharper field visualization
-    float radiusBase = 50.0 * zoomScale; 
+    // Tighter base radius for a concise, localized field effect
+    float radiusBase = 15.0 * zoomScale; 
     float radiusSq = radiusBase * radiusBase;
     
     float field = 0.0;
@@ -75,8 +73,7 @@ const FS_SOURCE = `
         float distSq = dot(diff, diff);
         
         // Inverse square law for electric field
-        // Add epsilon related to zoom to prevent singularity and aliasing at center
-        float epsilon = 5.0 * zoomScale;
+        float epsilon = 2.0 * zoomScale;
         float contrib = (p.z * radiusSq) / (distSq + epsilon); 
         
         field += contrib;
@@ -88,52 +85,38 @@ const FS_SOURCE = `
         avgIrruption = weightedIrruption / field;
     }
     
-    // Calculate world space coordinates for consistent noise texture regardless of camera
     vec2 worldUV = (gl_FragCoord.xy / u_zoom) + u_offset;
 
-    // Distortion Effect
-    // Use the field strength to distort the UVs for the noise function
-    // This creates a "heat shimmer" or "electric distortion" around active bots
-    float distortNoise = noise(worldUV * 0.02 + vec2(u_time * 0.2));
-    vec2 distortedUV = worldUV + vec2(distortNoise) * field * 10.0; // Distortion intensity scales with field
+    // Steady Distortion (Subtle heat haze, very slow)
+    float distortNoise = noise(worldUV * 0.01 + vec2(u_time * 0.02)); 
+    // Intensity heavily scaled by field strength
+    vec2 distortedUV = worldUV + vec2(distortNoise) * field * 10.0; 
 
-    // Electric arcs / filaments
-    float n = fbm(distortedUV * 0.01 + vec2(0.0, u_time * 0.2));
+    // Electric arcs / filaments on distorted UVs - Slower animation
+    float n = fbm(distortedUV * 0.01 + vec2(0.0, u_time * 0.05));
     
-    // Make arcs sharper
-    float electricity = smoothstep(0.4, 0.45, n * field);
-    
-    // Dynamic Flow
-    float flow = field * (0.5 + 0.6 * n);
+    // Steady State Flow - No pulsing, just slow evolution
+    float flow = field * (0.95 + 0.05 * n);
     
     vec4 color = vec4(0.0);
     
-    if (flow > 0.02) {
-       // Color Gradient
-       // Low Irruption: Deep Blue/Cyan
-       // High Irruption: Magenta/Electric White
-       
+    if (flow > 0.05) {
        vec3 cCalm = vec3(0.0, 0.5, 1.0); // Cyan/Blue
        vec3 cActive = vec3(1.0, 0.0, 0.8); // Magenta
        
        vec3 baseColor = mix(cCalm, cActive, clamp(avgIrruption * 1.5, 0.0, 1.0));
-       
-       // Core brightness
        vec3 cCore = mix(baseColor, vec3(1.0), 0.5);
-       
-       // Filament color
        vec3 cElec = vec3(0.8, 0.9, 1.0);
 
-       // Composition
-       float alpha = smoothstep(0.02, 0.2, flow);
-       alpha = clamp(alpha, 0.0, 0.6); // Max opacity
+       float alpha = smoothstep(0.05, 0.25, flow);
+       alpha = clamp(alpha, 0.0, 0.65); 
 
        vec3 rgb = baseColor * flow * 1.5;
        
-       // Add electric filaments
-       rgb += cElec * electricity * 2.0;
+       // Subtle electric lines
+       float electricity = smoothstep(0.42, 0.45, n * field);
+       rgb += cElec * electricity * 1.0;
        
-       // Highlight centers
        rgb += cCore * smoothstep(0.8, 1.5, flow);
 
        color = vec4(rgb * alpha, alpha);
@@ -151,14 +134,28 @@ interface SimulationCanvasProps {
   groundY: number;
   camera: CameraState;
   followingBotId: string | null;
+  isRunning: boolean;
 }
 
-export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foodRef, width, height, groundY, camera, followingBotId }) => {
+export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ 
+  botsRef, 
+  foodRef, 
+  width, 
+  height, 
+  groundY, 
+  camera, 
+  followingBotId,
+  isRunning 
+}) => {
   const canvas2dRef = useRef<HTMLCanvasElement>(null);
   const canvasGlRef = useRef<HTMLCanvasElement>(null);
   const glContextRef = useRef<WebGLRenderingContext | null>(null);
   const programRef = useRef<WebGLProgram | null>(null);
-  const startTimeRef = useRef<number>(Date.now());
+  
+  // Custom time tracking for shader to support pausing
+  const lastFrameTimeRef = useRef<number>(Date.now());
+  const shaderTimeRef = useRef<number>(0);
+
   const requestRef = useRef<number>(0);
   const mouseRef = useRef<{x: number, y: number} | null>(null);
 
@@ -355,22 +352,26 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foo
                // Add Irruption visualization to muscles
                const intensity = Math.min(1.0, strain * 4.0 + bot.irruption * 0.5); 
                
-               // Shift to hot pink/red on high irruption
-               const r = 255;
-               const g = Math.max(0, 80 - bot.irruption * 80);
-               const b = Math.max(100, 100 - bot.irruption * 100);
+               // DARKER SILHOUETTE for visibility against bright bio-field
+               // Deep Crimson/Maroon
+               // rgb(100, 0, 0) base
+               const r = 100;
+               const g = 0;
+               const b = 20;
 
-               ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${0.2 + intensity * 0.6})`;
-               ctx.lineWidth = Math.min(4, 1.5 + intensity * 2.5); // Clamp max width
+               ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${0.9 + intensity * 0.1})`;
+               ctx.lineWidth = Math.min(6, 2.5 + intensity * 3.5); 
             } else {
                const strain = Math.abs(dist - s.currentRestLength) / (s.currentRestLength || 1);
                if (s.stiffness > 0.7) { 
                    const intensity = Math.min(1.0, strain * 3.0);
-                   ctx.strokeStyle = `rgba(234, 179, 8, ${0.15 + intensity * 0.5})`;
-                   ctx.lineWidth = Math.min(3, 1 + intensity); 
+                   // Dark Charcoal/Black for stiff structures to silhouette against the glow
+                   ctx.strokeStyle = `rgba(20, 20, 20, ${0.9 + intensity * 0.1})`;
+                   ctx.lineWidth = Math.min(4, 2 + intensity * 1.5); 
                } else {
-                   ctx.strokeStyle = `rgba(255, 255, 255, 0.08)`;
-                   ctx.lineWidth = 0.8;
+                   // Dark Blue-Grey for passive/soft structures
+                   ctx.strokeStyle = `rgba(40, 50, 60, 0.8)`;
+                   ctx.lineWidth = 1.8;
                }
             }
             ctx.stroke();
@@ -477,8 +478,16 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foo
         const camX = camera.x;
         const camY = camera.y;
         
-        // Calculate Time for Pulse
-        const time = (Date.now() - startTimeRef.current) / 1000;
+        // Calculate Time for Shader
+        // Increment shader time only if simulation is running
+        const now = Date.now();
+        const dt = (now - lastFrameTimeRef.current) / 1000;
+        lastFrameTimeRef.current = now;
+
+        if (isRunning) {
+            shaderTimeRef.current += dt;
+        }
+        const time = shaderTimeRef.current;
 
         const candIndices = candidateIndicesRef.current;
         const candCharges = candidateChargesRef.current;
@@ -519,24 +528,13 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foo
             const screenX = (p.renderPos.x - camX) * zoom + cx;
             const screenY = (p.renderPos.y - camY) * zoom + cy;
             
-            // Calculate pulse intensity on CPU to save GPU cycles in the loop
-            const charge = p.charge;
-            
-            // Refined Pulse Logic
-            // Higher charge = Slower frequency (Concentration)
-            const pulseFreq = 0.5 + (1.0 - charge) * 3.0;
-            
-            // Higher charge = Deeper pulse (Heavy breathing/thinking)
-            const pulseDepth = 0.2 + charge * 0.6;
-            
-            const pulse = 1.0 - pulseDepth * (0.5 + 0.5 * Math.sin(time * pulseFreq));
-            
-            // Intensity passed to shader
-            const intensity = charge * pulse;
+            // Pulse logic removed for steady-state realism
+            // Just use the raw charge value, maybe lightly scaled
+            const intensity = p.charge;
             
             data[k*4] = screenX;
             data[k*4+1] = screenY;
-            data[k*4+2] = intensity; // Pass calculated intensity
+            data[k*4+2] = intensity; // Pass steady intensity
             data[k*4+3] = bot.irruption; // Pass Irruption level to shader
         }
 
@@ -562,7 +560,7 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foo
   useLayoutEffect(() => {
     requestRef.current = requestAnimationFrame(render);
     return () => cancelAnimationFrame(requestRef.current);
-  }, [width, height, groundY, camera, followingBotId]); 
+  }, [width, height, groundY, camera, followingBotId, isRunning]); 
 
   return (
     <div className="absolute inset-0 z-0 overflow-hidden" 

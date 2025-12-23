@@ -60,6 +60,7 @@ const App: React.FC = () => {
   // Camera State
   const [camera, setCamera] = useState<CameraState>({ x: 0, y: 0, zoom: 0.55 });
   const [followingBotId, setFollowingBotId] = useState<string | null>(null);
+  const cameraVelRef = useRef({ x: 0, y: 0 });
   const keysPressed = useRef<Set<string>>(new Set());
   const lastInputTimeRef = useRef<number>(Date.now());
   const isAutoCameraRef = useRef<boolean>(true);
@@ -127,22 +128,37 @@ const App: React.FC = () => {
         let startX = 0;
         let startY = 200 + Math.random() * 100;
 
-        if (typeof g.originX === 'number' && !isNaN(g.originX)) {
-             startX = g.originX + (Math.random() - 0.5) * 50; 
+        // Force rigorous separation for Generation 1 to ensure colonies don't touch
+        if (currentGen === 1) {
+            const match = g.color.match(/hsl\((\d+\.?\d*)/);
+            const hue = match ? parseFloat(match[1]) : 0;
+            // Native Strain is Cyan (~180), Invaders are Red/Magenta (~340 or ~0)
+            const isGroupA = (hue > 100 && hue < 260);
+
+            // 5000 unit gap total
+            const baseOffset = 2500; 
+            startX = isGroupA ? -baseOffset : baseOffset;
+            
+            // Large vertical variance to prevent horizontal line clumping
+            startY = 200 + (Math.random() - 0.5) * 1200; 
+            
+            // Random scatter within the colony area
+            startX += (Math.random() - 0.5) * 600; 
+            
+            // Update genome origin to persist this separation
+            g.originX = startX;
+            g.originY = startY;
         } else {
-           const match = g.color.match(/hsl\((\d+\.?\d*)/);
-           const hue = match ? parseFloat(match[1]) : 0;
-           const isGroupA = (hue > 150 && hue < 230);
-           
-           // Centered Spawn: Group A at -2400, Group B at +2400 for immense separation
-           startX = isGroupA ? -2400 : 2400; 
-           startX += (Math.random() - 0.5) * 100; // Reduced spread
-           g.originX = startX;
-        }
-        
-        // Use originY if available for vertical positioning
-        if (typeof g.originY === 'number' && !isNaN(g.originY)) {
-            startY = g.originY + (Math.random() - 0.5) * 50;
+            // For subsequent generations or loaded saves, check for valid existing position
+            const hasValidOrigin = typeof g.originX === 'number' && !isNaN(g.originX) && Math.abs(g.originX) > 1;
+            
+            if (hasValidOrigin) {
+                startX = g.originX! + (Math.random() - 0.5) * 50; 
+                if (typeof g.originY === 'number') startY = g.originY + (Math.random() - 0.5) * 50;
+            } else {
+                // Fallback separation just in case
+                startX = (Math.random() > 0.5 ? -2500 : 2500) + (Math.random() - 0.5) * 500;
+            }
         }
 
         return engine.createBot(g, startX, startY);
@@ -299,6 +315,8 @@ const App: React.FC = () => {
           isAutoCameraRef.current = false;
           lastInputTimeRef.current = now;
           setFollowingBotId(null);
+          // Reset spring velocity to prevent momentum glitch when switching from manual to auto
+          cameraVelRef.current = { x: 0, y: 0 };
           
           let dx = 0, dy = 0;
           const speed = 15 / camera.zoom;
@@ -341,13 +359,23 @@ const App: React.FC = () => {
              const targetCamX = targetBot.centerOfMass.x + offsetX;
              const targetCamY = targetBot.centerOfMass.y;
              
-             // Standard Lerp for Stability
-             const lerp = 0.08; 
+             // Damped Spring Physics (Replacing Lerp for organic feel)
+             const springK = 0.05; // Stiffness (Tension)
+             const springD = 0.85; // Damping (Friction)
+
+             // 1. Calculate Acceleration (Hooke's Law: F = -kx)
+             const ax = (targetCamX - camera.x) * springK;
+             const ay = (targetCamY - camera.y) * springK;
+
+             // 2. Update Velocity (Euler Integration)
+             cameraVelRef.current.x = (cameraVelRef.current.x + ax) * springD;
+             cameraVelRef.current.y = (cameraVelRef.current.y + ay) * springD;
              
+             // 3. Update Position
              setCamera(prev => ({
                  ...prev,
-                 x: prev.x + (targetCamX - prev.x) * lerp,
-                 y: prev.y + (targetCamY - prev.y) * lerp,
+                 x: prev.x + cameraVelRef.current.x,
+                 y: prev.y + cameraVelRef.current.y,
              }));
           }
       }
@@ -445,6 +473,7 @@ const App: React.FC = () => {
             groundY={config.groundHeight}
             camera={camera}
             followingBotId={followingBotId}
+            isRunning={isRunning}
           />
           
           <div className="absolute top-0 left-0 bottom-0 z-30">

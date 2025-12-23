@@ -536,9 +536,9 @@ export class PhysicsEngine {
 
   private applySocialForces(botCount: number) {
       const GROUP_REPULSION_RADIUS = 500; 
-      const GROUP_FORCE = 1.0; 
+      const GROUP_FORCE = 3.0; // Increased inter-group repulsion to enforce separation
       const SELF_REPULSION_RADIUS = 150; 
-      const SELF_FORCE = 0.3;
+      const SELF_FORCE = 0.1; // Decreased intra-group repulsion to encourage clumping
 
       for (let i = 0; i < botCount; i++) {
           const b1 = this.bots[i];

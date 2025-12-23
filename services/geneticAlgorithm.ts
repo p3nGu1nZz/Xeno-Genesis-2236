@@ -113,8 +113,8 @@ function createNervousRingGenome(generation: number, targetHue?: number): Genome
 }
 
 // Ensures the genome is a single connected component
-// Uses 8-way connectivity (Moore Neighborhood) to match Physics Engine springs
-// Removes any disconnected islands, keeping only the largest structure.
+// Uses 4-way connectivity (Orthogonal only) to prevent diagonal "hinges"
+// that look like disconnected colonies.
 export function enforceContiguity(genome: Genome): Genome {
     const genes = genome.genes.map(row => [...row]);
     const size = genome.gridSize;
@@ -134,13 +134,10 @@ export function enforceContiguity(genome: Genome): Genome {
                     const curr = queue.shift()!;
                     component.push(curr);
                     
-                    // 8-Way Neighbors (Orthogonal + Diagonal)
-                    // This matches the physics engine spring creation logic
+                    // 4-Way Neighbors (Orthogonal Only)
                     const neighbors = [
                         {x: curr.x+1, y: curr.y}, {x: curr.x-1, y: curr.y},
-                        {x: curr.x, y: curr.y+1}, {x: curr.x, y: curr.y-1},
-                        {x: curr.x+1, y: curr.y+1}, {x: curr.x-1, y: curr.y-1},
-                        {x: curr.x+1, y: curr.y-1}, {x: curr.x-1, y: curr.y+1}
+                        {x: curr.x, y: curr.y+1}, {x: curr.x, y: curr.y-1}
                     ];
                     
                     for(const n of neighbors) {
@@ -244,12 +241,10 @@ export function pruneGenome(genome: Genome, retentionRate: number = 0.15): Genom
     while (queue.length > 0 && toKeep.size < targetSize) {
         const curr = queue.shift()!;
         
-        // 8-Way Neighbors for pruning (Consistency with enforceContiguity)
+        // 4-Way Neighbors for pruning (Consistency with enforceContiguity)
         const neighbors = [
             {x: curr.x+1, y: curr.y}, {x: curr.x-1, y: curr.y},
-            {x: curr.x, y: curr.y+1}, {x: curr.x, y: curr.y-1},
-            {x: curr.x+1, y: curr.y+1}, {x: curr.x-1, y: curr.y-1},
-            {x: curr.x+1, y: curr.y-1}, {x: curr.x-1, y: curr.y+1}
+            {x: curr.x, y: curr.y+1}, {x: curr.x, y: curr.y-1}
         ];
 
         for (const n of neighbors) {
@@ -346,6 +341,7 @@ export function mutate(genome: Genome): Genome {
     for (let y = 1; y < genome.gridSize - 1; y++) {
       for (let x = 1; x < genome.gridSize - 1; x++) {
         if (newGenes[y][x] === CellType.EMPTY && Math.random() < 0.1) {
+            // Check orthogonal neighbors for growth
             const neighbors = [newGenes[y+1][x], newGenes[y-1][x], newGenes[y][x+1], newGenes[y][x-1]];
             if (neighbors.some(n => n !== CellType.EMPTY)) {
                 newGenes[y][x] = Math.random() > 0.5 ? CellType.SKIN : CellType.NEURON;

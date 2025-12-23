@@ -73,15 +73,21 @@ export class PhysicsEngine {
     // 1. Create Particles
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
-        if (genome.genes[y][x] !== CellType.EMPTY) {
+        const cellType = genome.genes[y][x];
+        if (cellType !== CellType.EMPTY) {
            const px = startX + (x - size/2) * scale;
            const py = startY + (y - size/2) * scale;
            
+           // Variable mass based on cell type for realistic physics
+           let mass = 1.2;
+           if (cellType === CellType.HEART) mass = 1.5; // Denser muscle
+           if (cellType === CellType.NEURON) mass = 0.8; // Lighter neuron
+
            particles.push({
              pos: { x: px, y: py },
              oldPos: { x: px, y: py },
              renderPos: { x: px, y: py },
-             mass: 1.2,
+             mass,
              force: { x: 0, y: 0 },
              charge: 0,
              isFixed: false,
@@ -120,8 +126,8 @@ export class PhysicsEngine {
                     
                     let stiffness = 2.0;
                     if (type1 === CellType.NEURON && type2 === CellType.NEURON) {
-                        // High stiffness with organic variability
-                        stiffness = 5.0 + (Math.random() * 2.0 - 1.0); 
+                        // High stiffness with organic variability (Random factor added)
+                        stiffness = 5.0 + (Math.random() * 3.0 - 1.5); 
                     } else if (isNeuron) {
                         stiffness = 3.5;
                     } else if (isMuscle) {
@@ -607,10 +613,17 @@ export class PhysicsEngine {
                         const rvy = v1y - v2y;
                         const impactVelocity = Math.abs(rvx * nx + rvy * ny);
 
+                        // Reduced mass represents the effective inertial resistance of the collision pair
+                        // Formula: (m1 * m2) / (m1 + m2)
+                        const reducedMass = (p1.mass * p2.mass) / (p1.mass + p2.mass);
+
                         // Metabolic energy transfer logic
                         const baseTransferRate = 0.005;
-                        const kineticFactor = impactVelocity * 0.02; // Scale factor for kinetic impact
-                        const totalRate = Math.min(0.1, baseTransferRate + kineticFactor);
+                        // Kinetic factor scaled by reduced mass to simulate momentum intensity
+                        // Heavier particles (like muscles) transfer more energy.
+                        const kineticFactor = impactVelocity * reducedMass * 0.04; 
+
+                        const totalRate = Math.min(0.15, baseTransferRate + kineticFactor);
 
                         const eDiff = b1.energy - b2.energy;
                         const transfer = eDiff * totalRate;

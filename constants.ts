@@ -11,11 +11,11 @@ export const DEFAULT_CONFIG: SimulationConfig = {
   populationSize: INITIAL_POPULATION_SIZE,
   maxPopulationSize: MAX_POPULATION_CAP,
   foodCount: DEFAULT_FOOD_COUNT,
-  gravity: 0.15, 
+  gravity: 0.0, // Disabled for Top-Down Orthogonal View
   friction: 0.96, // Reduced drag to allow more gliding/momentum
   muscleStrength: 0.45, // Increased strength for more vigorous movement
   muscleSpeed: 0.1, 
-  groundHeight: 1200, 
+  groundHeight: 0, // Irrelevant in infinite top-down plane
   gridScale: 100, // Increased from 85 for wider node spacing
   bioelectricDecay: 0.98,
   plasticity: 0.0005, 

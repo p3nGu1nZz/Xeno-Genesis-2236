@@ -113,6 +113,8 @@ export interface GeneticStats {
   total: number;
 }
 
+export type SimulationEventType = 'COLLISION' | 'EAT' | 'MITOSIS' | 'DEATH';
+
 // --- Worker Types ---
 
 export type WorkerMessageType = 'INIT' | 'START' | 'STOP' | 'UPDATE_SETTINGS' | 'TICK' | 'LOAD_STATE';

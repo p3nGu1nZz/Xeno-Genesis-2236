@@ -12,9 +12,10 @@ import { HelpModal } from './components/HelpModal';
 import { DriftPanel } from './components/DriftPanel';
 import { Xenobot, Genome, AnalysisResult, CameraState, SimulationConfig, Food, GeneticStats } from './types';
 import { DEFAULT_CONFIG, EVOLUTION_INTERVAL } from './constants';
-import { ScanEye } from 'lucide-react';
+import { ScanEye, Volume2, VolumeX } from 'lucide-react';
 import { PhysicsEngine } from './services/physicsEngine';
 import { createRandomGenome } from './services/geneticAlgorithm';
+import { AudioManager } from './services/audioManager';
 
 const App: React.FC = () => {
   // Application State
@@ -23,6 +24,10 @@ const App: React.FC = () => {
   const [showHelp, setShowHelp] = useState(false);
   const [config, setConfig] = useState<SimulationConfig>(DEFAULT_CONFIG);
   const [isSidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  // Audio State
+  const audioManagerRef = useRef<AudioManager | null>(null);
+  const [isMuted, setIsMuted] = useState(false);
 
   // Simulation State
   const [generation, setGeneration] = useState(1);
@@ -69,6 +74,22 @@ const App: React.FC = () => {
   
   // Use window dimensions for full screen canvas
   const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
+
+  // --- Audio Initialization ---
+  useEffect(() => {
+    if (!audioManagerRef.current) {
+        audioManagerRef.current = new AudioManager();
+        // Initialize muted state based on manager default
+        setIsMuted(audioManagerRef.current.getMuteState());
+    }
+  }, []);
+
+  const toggleMute = () => {
+      if (audioManagerRef.current) {
+          const muted = audioManagerRef.current.toggleMute();
+          setIsMuted(muted || false);
+      }
+  };
 
   // --- Simulation Logic (Main Thread) ---
 
@@ -217,6 +238,16 @@ const App: React.FC = () => {
       if (isRunning) {
           engine.update(time / 1000); // Physics Update
           
+          // Process Physics Events for Audio
+          if (engine.events.length > 0) {
+              engine.events.forEach(e => {
+                  if (e === 'COLLISION') audioManagerRef.current?.playCollisionSound();
+                  if (e === 'EAT') audioManagerRef.current?.playEatSound();
+                  if (e === 'MITOSIS') audioManagerRef.current?.playMitosisSound();
+                  if (e === 'DEATH') audioManagerRef.current?.playDeathSound();
+              });
+          }
+
           // Sync Refs
           botsRef.current = engine.bots; 
           foodRef.current = engine.food;
@@ -289,11 +320,6 @@ const App: React.FC = () => {
 
           if (targetBot) {
              // Offset logic: Keep bot in the left ~35% of the screen
-             // Screen Width = dimensions.width
-             // Center = 0.5 * width
-             // Target Visual Position = 0.35 * width
-             // Offset required from center = (0.5 - 0.35) * width = 0.15 * width
-             // Camera X (Center) = Bot X + (Offset / Zoom)
              const offsetX = (dimensions.width * 0.15) / camera.zoom;
 
              const targetCamX = targetBot.centerOfMass.x + offsetX;
@@ -343,6 +369,11 @@ const App: React.FC = () => {
   }, []);
 
   const handleStart = () => {
+    // Attempt to start audio context if muted/suspended
+    if (audioManagerRef.current && !isMuted) {
+        audioManagerRef.current.startDrone();
+    }
+
     if (appState === 'TITLE') {
         initSimulation(config);
         setAppState('SIMULATION');
@@ -374,7 +405,13 @@ const App: React.FC = () => {
 
   return (
     <>
-      {appState === 'TITLE' && <TitleScreen onStart={handleStart} />}
+      {appState === 'TITLE' && (
+          <TitleScreen 
+              onStart={handleStart} 
+              isMuted={isMuted} 
+              onToggleMute={toggleMute} 
+          />
+      )}
       
       {appState === 'SIMULATION' && (
         <div className="relative w-full h-full overflow-hidden bg-deep-space">
@@ -440,6 +477,14 @@ const App: React.FC = () => {
           <MomBotPanel isOpen={showMomBotPanel} onClose={() => setShowMomBotPanel(false)} />
           
           <div className="absolute bottom-6 right-6 flex gap-4">
+              <button 
+                onClick={toggleMute} 
+                className="p-2 bg-slate-800 rounded-full text-slate-400 hover:text-white border border-slate-600"
+                title={isMuted ? "Unmute" : "Mute"}
+              >
+                  {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+              </button>
+
               <button onClick={() => setShowHelp(true)} className="p-2 bg-slate-800 rounded-full text-slate-400 hover:text-white border border-slate-600">
                   <ScanEye size={20} />
               </button>

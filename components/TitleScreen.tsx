@@ -1,17 +1,15 @@
 
-import React, { useEffect, useState, useRef } from 'react';
-import { Play, Cpu, Globe, Zap, Volume2, VolumeX } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Cpu, Globe, Zap, Volume2, VolumeX } from 'lucide-react';
 
 interface TitleScreenProps {
   onStart: () => void;
+  isMuted: boolean;
+  onToggleMute: () => void;
 }
 
-export const TitleScreen: React.FC<TitleScreenProps> = ({ onStart }) => {
+export const TitleScreen: React.FC<TitleScreenProps> = ({ onStart, isMuted, onToggleMute }) => {
   const [glitch, setGlitch] = useState(false);
-  const [soundEnabled, setSoundEnabled] = useState(false);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const oscillatorsRef = useRef<OscillatorNode[]>([]);
-  const gainNodeRef = useRef<GainNode | null>(null);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -19,65 +17,6 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({ onStart }) => {
       setTimeout(() => setGlitch(false), 150);
     }, 2500);
     return () => clearInterval(interval);
-  }, []);
-
-  const toggleSound = () => {
-    if (soundEnabled) {
-      // Stop Sound
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
-        audioContextRef.current = null;
-      }
-      oscillatorsRef.current = [];
-      setSoundEnabled(false);
-    } else {
-      // Start Sound
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      audioContextRef.current = ctx;
-
-      const masterGain = ctx.createGain();
-      masterGain.gain.value = 0.15; // Low volume
-      masterGain.connect(ctx.destination);
-      gainNodeRef.current = masterGain;
-
-      // Drone Oscillators
-      const freqs = [55, 110.5, 164.8]; // A1, A2 (detuned), E3
-      freqs.forEach(f => {
-        const osc = ctx.createOscillator();
-        osc.type = 'sawtooth';
-        osc.frequency.value = f;
-        
-        // Lowpass filter for ambient feel
-        const filter = ctx.createBiquadFilter();
-        filter.type = 'lowpass';
-        filter.frequency.value = 200;
-        
-        osc.connect(filter);
-        filter.connect(masterGain);
-        osc.start();
-        oscillatorsRef.current.push(osc);
-      });
-
-      // LFO for movement
-      const lfo = ctx.createOscillator();
-      lfo.frequency.value = 0.1;
-      const lfoGain = ctx.createGain();
-      lfoGain.gain.value = 50;
-      lfo.connect(lfoGain);
-      // Modulate filter of first osc
-      // (Simplified for brevity, just playing static drone is fine for MVP)
-      
-      setSoundEnabled(true);
-    }
-  };
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
-      }
-    };
   }, []);
 
   return (
@@ -110,11 +49,11 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({ onStart }) => {
 
       {/* Sound Toggle */}
       <button 
-        onClick={toggleSound}
+        onClick={onToggleMute}
         className="absolute top-8 right-8 z-50 text-neon-cyan hover:text-white transition-colors p-2 bg-black/50 rounded-full border border-neon-cyan/30"
-        title={soundEnabled ? "Mute Ambient Drone" : "Enable Ambient Drone"}
+        title={isMuted ? "Unmute Audio" : "Mute Audio"}
       >
-        {soundEnabled ? <Volume2 size={24} /> : <VolumeX size={24} />}
+        {isMuted ? <VolumeX size={24} /> : <Volume2 size={24} />}
       </button>
 
       <div className="relative z-10 text-center space-y-10 p-12 bg-black/60 backdrop-blur-md border border-slate-800/80 rounded-sm shadow-[0_0_150px_rgba(0,243,255,0.15)] max-w-4xl w-full mx-4">

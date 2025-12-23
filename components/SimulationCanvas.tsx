@@ -249,18 +249,6 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foo
       for (let y = startY; y < endY; y += 100) { ctx.moveTo(startX, y); ctx.lineTo(endX, y); }
       ctx.stroke();
 
-      if (groundY < endY && groundY > startY) {
-          ctx.strokeStyle = '#00f3ff';
-          ctx.lineWidth = 4;
-          ctx.shadowColor = '#00f3ff';
-          ctx.shadowBlur = 10; // Reduced blur to prevent blowout
-          ctx.beginPath();
-          ctx.moveTo(startX - 1000, groundY);
-          ctx.lineTo(endX + 1000, groundY);
-          ctx.stroke();
-          ctx.shadowBlur = 0;
-      }
-      
       // Render Food
       if (food && food.length > 0) {
           const time = Date.now() * 0.003;

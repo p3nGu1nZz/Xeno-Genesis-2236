@@ -1,5 +1,5 @@
 
-import { Xenobot, Particle, Spring, Genome, CellType, SimulationConfig, Food, GeneticStats } from '../types';
+import { Xenobot, Particle, Spring, Genome, CellType, SimulationConfig, Food, GeneticStats, SimulationEventType } from '../types';
 import { DEFAULT_CONFIG, TIMESTEP, CILIA_FORCE, METABOLIC_DECAY, INITIAL_YOLK_ENERGY, SURFACE_TENSION, FOOD_ENERGY, FOOD_RADIUS, MITOSIS_THRESHOLD, BREAKING_THRESHOLD } from '../constants';
 import { mutate } from './geneticAlgorithm';
 
@@ -14,6 +14,8 @@ export class PhysicsEngine {
   food: Food[] = [];
   config: SimulationConfig;
   groundY: number;
+  public events: SimulationEventType[] = []; // Event queue for UI/Audio
+
   private nextGroupId = 2; // Start after 0 and 1 to ensure unique IDs for new groups
 
   constructor(config: SimulationConfig = DEFAULT_CONFIG) {
@@ -31,12 +33,9 @@ export class PhysicsEngine {
   }
 
   spawnFood() {
-     // Spawn food in a wide distribution since boundaries are removed
-     const xRange = 8000; 
-     const deepLimit = -2500;
-     const surfaceBuffer = 100;
-     const surfaceLimit = this.groundY - surfaceBuffer;
-     const MIN_SPAWN_DISTANCE = 300; // Reduced from 500 to encourage density
+     // Spawn food in a wide distribution for top-down open world
+     const range = 4000;
+     const MIN_SPAWN_DISTANCE = 300; 
      const MAX_RETRIES = 10;
 
      let x = 0;
@@ -45,8 +44,8 @@ export class PhysicsEngine {
 
      // Attempt to find a valid position away from bots
      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-         x = (Math.random() - 0.5) * xRange;
-         y = deepLimit + Math.random() * (surfaceLimit - deepLimit);
+         x = (Math.random() - 0.5) * range * 2;
+         y = (Math.random() - 0.5) * range * 2;
          
          valid = true;
          for (const bot of this.bots) {
@@ -131,8 +130,20 @@ export class PhysicsEngine {
                     const isMuscle = (type1 === CellType.HEART || type2 === CellType.HEART);
                     const isNeuron = (type1 === CellType.NEURON || type2 === CellType.NEURON);
                     
-                    // COHESION: Increased stiffness significantly for rigid organism feel
-                    const stiffness = isNeuron ? 1.5 : 1.2; 
+                    // REFINED STIFFNESS: Dynamic material properties for rigid cohesion
+                    let stiffness = 2.0; // Base stiffness
+                    
+                    if (type1 === CellType.NEURON && type2 === CellType.NEURON) {
+                        // Added small random factor for organic structural variations
+                        const variation = (Math.random() * 2.0 - 1.0);
+                        stiffness = 5.0 + variation; 
+                    } else if (isNeuron) {
+                        stiffness = 3.5; 
+                    } else if (isMuscle) {
+                        stiffness = 3.0; 
+                    } else {
+                        stiffness = 2.0; 
+                    }
 
                     springs.push({
                         p1: p1Idx,
@@ -258,6 +269,9 @@ export class PhysicsEngine {
   }
 
   update(time: number) {
+    // Clear previous events
+    this.events = [];
+
     const dt = TIMESTEP;
     const dtSq = dt * dt;
     const botCount = this.bots.length;
@@ -386,7 +400,10 @@ export class PhysicsEngine {
       
       const ageFactor = Math.max(1.0, 500.0 / (bot.age + 10)); // Strong when young
       const energyFactor = bot.energy < 1000 ? 2.0 : 1.0; // Strong when starving
-      const structureMultiplier = ageFactor * energyFactor;
+      
+      // Increased multiplier buffer to make them more resilient
+      const structureMultiplier = ageFactor * energyFactor * 1.2; 
+      
       const dynamicThreshold = BREAKING_THRESHOLD * structureMultiplier;
 
       // 1. Check for broken springs (Physics Tearing)
@@ -524,6 +541,7 @@ export class PhysicsEngine {
       
       bot.energy *= 0.5; // Parent energy reduced
 
+      this.events.push('MITOSIS'); // Trigger sound
       return newBot;
   }
   
@@ -588,17 +606,43 @@ export class PhysicsEngine {
                             const nx = pdx / pDist;
                             const ny = pdy / pDist;
                             
-                            const separation = overlap * 0.4;
+                            // Mass-based resolution
+                            const totalMass = p1.mass + p2.mass;
+                            // Ratio determines how much each particle moves.
+                            // Heavier particle moves less.
+                            const m1Ratio = p2.mass / totalMass; 
+                            const m2Ratio = p1.mass / totalMass;
+
+                            // Stability factor (0.8 prevents jitter in iterative solvers)
+                            const responseCoef = 0.8; 
                             
-                            p1.pos.x += nx * separation;
-                            p1.pos.y += ny * separation;
-                            p2.pos.x -= nx * separation;
-                            p2.pos.y -= ny * separation;
+                            const moveX = nx * overlap * responseCoef;
+                            const moveY = ny * overlap * responseCoef;
+
+                            p1.pos.x += moveX * m1Ratio;
+                            p1.pos.y += moveY * m1Ratio;
+                            p2.pos.x -= moveX * m2Ratio;
+                            p2.pos.y -= moveY * m2Ratio;
+
+                            // --- NEW ENERGY TRANSFER ---
+                            // Metabolic energy flows from high potential to low potential
+                            const transferRate = 0.005; // 0.5% of difference per contact point
+                            const eDiff = b1.energy - b2.energy;
+                            const transfer = eDiff * transferRate;
+                            
+                            b1.energy -= transfer;
+                            b2.energy += transfer;
+                            // ---------------------------
 
                             // Collision Event for Visuals
                             if (!b1.lastCollisionTime || now - b1.lastCollisionTime > 500) {
                                 b1.lastCollisionTime = now;
                                 b1.lastCollisionPoint = { x: (p1.pos.x + p2.pos.x) / 2, y: (p1.pos.y + p2.pos.y) / 2 };
+                                
+                                // Trigger sound event for significant collisions only
+                                if (Math.abs(transfer) > 1.0) {
+                                    this.events.push('COLLISION');
+                                }
                             }
                             if (!b2.lastCollisionTime || now - b2.lastCollisionTime > 500) {
                                 b2.lastCollisionTime = now;
@@ -617,9 +661,10 @@ export class PhysicsEngine {
       const GROUP_FORCE = 6.0; 
       
       const SELF_REPULSION_RADIUS = 200; 
-      // Increased Cohesion Radius and Strength for same group
-      const COHESION_RADIUS = 2500; 
-      const ATTRACTION_STRENGTH = 0.55; 
+      // Increased Cohesion Radius for better group retention
+      const COHESION_RADIUS = 2800; 
+      // Increased Attraction Strength to reinforce colony integrity
+      const ATTRACTION_STRENGTH = 0.85; 
       const REPULSION_STRENGTH = 1.5; 
 
       for (let i = 0; i < botCount; i++) {
@@ -707,7 +752,10 @@ export class PhysicsEngine {
     bot.age++;
 
     if (bot.energy <= 0) {
-        bot.isDead = true;
+        if (!bot.isDead) {
+            bot.isDead = true;
+            this.events.push('DEATH');
+        }
         return; 
     }
 
@@ -746,7 +794,7 @@ export class PhysicsEngine {
     // FLUID SIMULATION CONSTANTS
     const FLUID_DENSITY = 0.04; 
     const PARTICLE_VOLUME = 30.0;
-    const BASE_DRAG = 0.05;
+    const BASE_DRAG = 0.15; // Increased damping for stability
 
     for (let i = 0; i < pCount; i++) {
         const p = particles[i];
@@ -791,7 +839,8 @@ export class PhysicsEngine {
         // Higher Energy = Tauter (holds shape better). Lower Energy = Looser (deforms).
         // Range: 0.5x to 1.5x base tension
         const energyRatio = Math.min(1.0, Math.max(0.1, bot.energy / INITIAL_YOLK_ENERGY));
-        const dynamicTension = SURFACE_TENSION * (0.5 + 0.8 * energyRatio);
+        // Increased surface tension influence for better cohesion
+        const dynamicTension = (SURFACE_TENSION * 3.0) * (0.5 + 0.8 * energyRatio);
 
         const dxSelf = bot.centerOfMass.x - p.pos.x;
         const dySelf = bot.centerOfMass.y - p.pos.y;
@@ -898,6 +947,7 @@ export class PhysicsEngine {
                    bot.energy += f.energy;
                    energyGained += f.energy;
                    this.food.splice(i, 1);
+                   this.events.push('EAT'); // Trigger eat sound
                }
           }
       }
@@ -936,7 +986,9 @@ export class PhysicsEngine {
       // Cohesion: Align with group velocity strongly
       const pVx = p.pos.x - p.oldPos.x;
       const pVy = p.pos.y - p.oldPos.y;
-      const cohesionStrength = 8.0 * memory; // Increased strength for unity
+      
+      // Decreased cohesion strength for more independent local motion
+      const cohesionStrength = 5.0 * memory; 
       
       cx += (avgVx - pVx) * cohesionStrength;
       cy += (avgVy - pVy) * cohesionStrength;
@@ -993,7 +1045,10 @@ export class PhysicsEngine {
 
       // 1. Internal Repulsion (Self-Collision Prevention)
       // Iterate particles to ensure they don't collapse into a singularity
-      const SELF_NODE_RADIUS_SQ = 15 * 15;
+      
+      // Decreased radius to allow closer clumping/higher density
+      const SELF_NODE_RADIUS_SQ = 10 * 10; 
+      
       for (let i = 0; i < particles.length; i++) {
           for (let j = i + 1; j < particles.length; j++) {
               const p1 = particles[i];
@@ -1003,8 +1058,8 @@ export class PhysicsEngine {
               const dSq = dx*dx + dy*dy;
               if (dSq < SELF_NODE_RADIUS_SQ && dSq > 0.001) {
                   const dist = Math.sqrt(dSq);
-                  const overlap = 15 - dist;
-                  const force = overlap * 0.5; // Stronger repulsion to prevent collapse
+                  const overlap = 10 - dist;
+                  const force = overlap * 2.0; // Significantly increased repulsion to prevent clumping
                   const nx = dx / dist;
                   const ny = dy / dist;
                   
@@ -1044,7 +1099,8 @@ export class PhysicsEngine {
           const dvy = v2y - v1y;
           
           // COHESION: Apply full vector damping to enforce rigid body motion
-          const dampingCoeff = 0.8; 
+          // UPDATED: Increased to 11.25 (1.5x of 7.5) for even tighter organismal movement
+          const dampingCoeff = 11.25; 
 
           p1.force.x += dvx * dampingCoeff;
           p1.force.y += dvy * dampingCoeff;
@@ -1073,7 +1129,8 @@ export class PhysicsEngine {
           }
 
           const diff = (dist - targetLen) / dist;
-          const forceVal = s.stiffness * diff;
+          // UPDATED: Multiplied stiffness by 22.5 (1.5x of 15.0) to enforce rigidity and prevent breaking
+          const forceVal = (s.stiffness * 22.5) * diff;
 
           const stress = Math.abs(diff); 
           const chargeGen = stress * 0.6;
@@ -1111,15 +1168,14 @@ export class PhysicsEngine {
 
   private integrateParticles(bot: Xenobot, dtSq: number, fluidBaseFriction: number) {
       const particles = bot.particles;
-      const invGroundY = 1.0 / (this.groundY || 1);
       let cx = 0, cy = 0;
 
       for (const p of particles) {
           p.force.x = Math.max(-MAX_FORCE, Math.min(MAX_FORCE, p.force.x));
           p.force.y = Math.max(-MAX_FORCE, Math.min(MAX_FORCE, p.force.y));
 
-          const depthVal = Math.max(0, Math.min(1, p.pos.y * invGroundY));
-          const effectiveFriction = fluidBaseFriction * (1.0 - (depthVal * 0.03));
+          // Removed depth-based friction
+          const effectiveFriction = fluidBaseFriction;
 
           let vx = (p.pos.x - p.oldPos.x) * effectiveFriction;
           let vy = (p.pos.y - p.oldPos.y) * effectiveFriction;
@@ -1138,13 +1194,7 @@ export class PhysicsEngine {
               p.pos.y = p.oldPos.y;
           }
 
-          if (p.pos.y > this.groundY) {
-              p.pos.y = this.groundY;
-              const vy_impact = (p.pos.y - p.oldPos.y);
-              p.oldPos.y = p.pos.y + vy_impact * 0.6; 
-          }
-          // Removed Hard Ceiling/Depth Clamps to allow free exploration
-          // Gravity and Entropy Tax (in performAbsorption) now manage bounds.
+          // Removed ground collision logic for top-down infinite plane
 
           cx += p.pos.x;
           cy += p.pos.y;

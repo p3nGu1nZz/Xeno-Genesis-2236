@@ -1,8 +1,5 @@
-
 import { Genome, CellType } from '../types';
 import { GRID_SIZE } from '../constants';
-
-const MUTATION_RATE = 0.2; 
 
 // "Nervous Ring" Topology Definition
 // Central 2x2 Core: NEURON
@@ -65,7 +62,7 @@ export function createRandomGenome(generation: number = 0, targetHue?: number): 
   
   const color = `hsl(${h.toFixed(0)}, 70%, 60%)`;
 
-  return {
+  const genome = {
     id: Math.random().toString(36).substr(2, 9),
     gridSize: GRID_SIZE,
     genes,
@@ -73,9 +70,12 @@ export function createRandomGenome(generation: number = 0, targetHue?: number): 
     generation,
     color,
     bioelectricMemory: Math.random(),
-    originX: 0, // Default 
-    originY: 200 // Default Y area
+    originX: 0, 
+    originY: 200
   };
+
+  // Enforce graph connectivity immediately
+  return enforceContiguity(genome);
 }
 
 function createNervousRingGenome(generation: number, targetHue?: number): Genome {
@@ -96,17 +96,90 @@ function createNervousRingGenome(generation: number, targetHue?: number): Genome
     }
     if (h < 0) h += 360;
 
-    return {
+    const genome = {
         id: "PLATONIC-" + Math.random().toString(36).substr(2, 6),
         gridSize: GRID_SIZE,
         genes,
         fitness: 0,
         generation,
-        color: `hsl(${h.toFixed(0)}, 80%, 50%)`, // Slightly brighter to indicate special status
-        bioelectricMemory: 0.8, // High plasticity to adapt quickly
+        color: `hsl(${h.toFixed(0)}, 80%, 50%)`, 
+        bioelectricMemory: 0.8,
         originX: 0,
         originY: 200
     };
+    
+    // Platonic ring is designed to be connected, but safe to enforce
+    return enforceContiguity(genome);
+}
+
+// Ensures the genome is a single connected component (Orthogonal Neighbors)
+// Removes any disconnected islands, keeping only the largest structure.
+export function enforceContiguity(genome: Genome): Genome {
+    const genes = genome.genes.map(row => [...row]);
+    const size = genome.gridSize;
+    const visited = new Set<string>();
+    const components: {x:number, y:number}[][] = [];
+
+    // Find all connected components
+    for(let y=0; y<size; y++) {
+        for(let x=0; x<size; x++) {
+            const key = `${x},${y}`;
+            if (genes[y][x] !== CellType.EMPTY && !visited.has(key)) {
+                const component: {x:number, y:number}[] = [];
+                const queue = [{x, y}];
+                visited.add(key);
+                
+                while(queue.length > 0) {
+                    const curr = queue.shift()!;
+                    component.push(curr);
+                    
+                    // Orthogonal neighbors only for strict contiguity
+                    const neighbors = [
+                        {x: curr.x+1, y: curr.y}, {x: curr.x-1, y: curr.y},
+                        {x: curr.x, y: curr.y+1}, {x: curr.x, y: curr.y-1}
+                    ];
+                    
+                    for(const n of neighbors) {
+                         if (n.x >= 0 && n.x < size && n.y >= 0 && n.y < size) {
+                             const nKey = `${n.x},${n.y}`;
+                             if (genes[n.y][n.x] !== CellType.EMPTY && !visited.has(nKey)) {
+                                 visited.add(nKey);
+                                 queue.push(n);
+                             }
+                         }
+                    }
+                }
+                components.push(component);
+            }
+        }
+    }
+
+    // If empty
+    if (components.length === 0) {
+        genes[Math.floor(size/2)][Math.floor(size/2)] = CellType.SKIN;
+        return { ...genome, genes };
+    }
+
+    // If already contiguous
+    if (components.length === 1) return genome;
+
+    // Find largest component by node count
+    components.sort((a, b) => b.length - a.length);
+    const largest = components[0];
+    const keepSet = new Set(largest.map(c => `${c.x},${c.y}`));
+
+    // Prune everything else
+    for(let y=0; y<size; y++) {
+        for(let x=0; x<size; x++) {
+            if (genes[y][x] !== CellType.EMPTY) {
+                if (!keepSet.has(`${x},${y}`)) {
+                    genes[y][x] = CellType.EMPTY;
+                }
+            }
+        }
+    }
+
+    return { ...genome, genes };
 }
 
 // Shrinks a genome to a small fraction of its size (1/10th intent), keeping connected components
@@ -173,7 +246,8 @@ export function pruneGenome(genome: Genome, retentionRate: number = 0.15): Genom
         }
     }
 
-    return { ...genome, genes: newGenes };
+    // Safety run to ensure contiguity after pruning
+    return enforceContiguity({ ...genome, genes: newGenes });
 }
 
 function crossover(parentA: Genome, parentB: Genome, generation: number): Genome {
@@ -195,7 +269,6 @@ function crossover(parentA: Genome, parentB: Genome, generation: number): Genome
   const posYA = parentA.originY ?? 0;
   const posYB = parentB.originY ?? 0;
   
-  // Calculate spatial midpoint for offspring to maintain fluidity
   const dist = Math.sqrt(Math.pow(posXA - posXB, 2) + Math.pow(posYA - posYB, 2));
   
   let originX = posXA;
@@ -205,7 +278,6 @@ function crossover(parentA: Genome, parentB: Genome, generation: number): Genome
       originX = (posXA + posXB) / 2;
       originY = (posYA + posYB) / 2;
   } else {
-      // Too far apart, stick to parent with matching color/species or random
       if (color === parentA.color) {
           originX = posXA;
           originY = posYA;
@@ -227,8 +299,11 @@ function crossover(parentA: Genome, parentB: Genome, generation: number): Genome
     originY
   };
 
-  // Offspring starts as a small "seed" (1/10th size roughly)
-  return pruneGenome(child, 0.15);
+  // Enforce Contiguity
+  let processed = enforceContiguity(child);
+  
+  // Prune (which also enforces contiguity) to prevent instant large children
+  return pruneGenome(processed, 0.25);
 }
 
 export function mutate(genome: Genome): Genome {
@@ -250,15 +325,13 @@ export function mutate(genome: Genome): Genome {
     }
   }
 
-  // 2. Platonic Pull (The bias towards Nervous Ring)
-  // Small chance for any cell to spontaneously align with the Platonic Ideal
+  // 2. Platonic Pull
   if (Math.random() < 0.4) { 
       const x = Math.floor(Math.random() * genome.gridSize);
       const y = Math.floor(Math.random() * genome.gridSize);
       const idealType = PLATONIC_IDEAL_MAP[`${x},${y}`];
       
       if (idealType !== undefined && newGenes[y][x] !== idealType) {
-          // 10% chance to flip to ideal if selected
           if (Math.random() < 0.1) {
               newGenes[y][x] = idealType;
               mutated = true;
@@ -284,15 +357,15 @@ export function mutate(genome: Genome): Genome {
       mutated = true;
   }
 
-  return {
+  const mutatedGenome = {
     ...genome,
-    id: Math.random().toString(36).substr(2, 9), // Ensure mutated clones have unique IDs
+    id: Math.random().toString(36).substr(2, 9),
     genes: newGenes,
     bioelectricMemory: newMemory,
     color: mutated ? adjustColor(genome.color) : genome.color,
-    originX: genome.originX,
-    originY: genome.originY
   };
+
+  return enforceContiguity(mutatedGenome);
 }
 
 function adjustColor(hsl: string): string {
@@ -317,22 +390,16 @@ export function evolvePopulation(population: Genome[], generation: number, maxPo
 
   const maxPerGroup = Math.floor(maxPopulationSize / 2);
   
-  // Reduced growth logic: Only 10% chance for new offspring per evolution step
   const evolveSubPool = (pool: Genome[], currentMax: number): Genome[] => {
       if (pool.length === 0) return [];
       
       const sorted = [...pool].sort((a, b) => b.fitness - a.fitness);
       
-      // Calculate target new births (10% of current size)
       const growthTarget = Math.max(1, Math.floor(pool.length * 0.10));
-      
-      // Cap at config limit
       const limit = Math.min(currentMax, pool.length + growthTarget);
       
-      // Keep all survivors (elitism + existing)
       const nextGen = [...sorted];
       
-      // Add new children up to the 10% growth limit
       let attempts = 0;
       while (nextGen.length < limit && attempts < 100) {
           const p1 = tournamentSelect(sorted);

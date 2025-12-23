@@ -134,8 +134,8 @@ const App: React.FC = () => {
            const hue = match ? parseFloat(match[1]) : 0;
            const isGroupA = (hue > 150 && hue < 230);
            
-           // Centered Spawn: Group A at -1200, Group B at +1200 for immense separation
-           startX = isGroupA ? -1200 : 1200; 
+           // Centered Spawn: Group A at -2400, Group B at +2400 for immense separation
+           startX = isGroupA ? -2400 : 2400; 
            startX += (Math.random() - 0.5) * 100; // Reduced spread
            g.originX = startX;
         }

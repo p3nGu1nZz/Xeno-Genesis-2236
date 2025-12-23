@@ -1,4 +1,3 @@
-
 import { SimulationConfig } from './types';
 
 export const INITIAL_POPULATION_SIZE = 2; 
@@ -45,3 +44,4 @@ export const SURFACE_TENSION = 0.005;
 export const FOOD_ENERGY = 500; // Slight reduction to require more foraging
 export const FOOD_RADIUS = 15;
 export const BREAKING_THRESHOLD = 150.0; // effectively disable accidental breaking
+export const COLLISION_RADIUS = 12.0;

@@ -21,15 +21,15 @@ import {
   FOOD_ENERGY,
   FOOD_RADIUS,
   SURFACE_TENSION,
-  BREAKING_THRESHOLD
+  BREAKING_THRESHOLD,
+  COLLISION_RADIUS
 } from '../constants';
-import { evolvePopulation, mutate, pruneGenome } from './geneticAlgorithm';
+import { evolvePopulation as algoEvolve, mutate, pruneGenome } from './geneticAlgorithm';
 
 const uid = () => Math.random().toString(36).substr(2, 9);
 const MAX_FORCE = 15.0;
 const MAX_VELOCITY = 20.0;
-const PARTICLE_MAINTENANCE_COST = 0.005; // Reduced from 0.1 to 0.005 to prevent rapid death
-const COLLISION_RADIUS = 12; 
+const PARTICLE_MAINTENANCE_COST = 0.005; 
 
 export class PhysicsEngine {
   public bots: Xenobot[] = [];
@@ -176,7 +176,7 @@ export class PhysicsEngine {
     };
   }
 
-  public update(dt: number) {
+  public update(totalTime: number) {
     this.events = [];
     
     // We use a fixed timestep for physics stability, but the dt passed in is used for scaling if needed.
@@ -209,28 +209,23 @@ export class PhysicsEngine {
         // --- PHYSICS INTEGRATION ---
         
         // A. Internal Structure (Muscles, Stiffness, Damping)
-        const activeCharge = this.updateInternalStructure(bot, Date.now() / 1000);
+        const activeCharge = this.updateInternalStructure(bot, totalTime);
         bot.totalCharge = activeCharge;
 
         // B. External Forces (Fluid, Cilia, Gravity)
-        this.performMaterialPhysics(bot, Date.now() / 1000, TIMESTEP, dtSq);
+        this.performMaterialPhysics(bot, totalTime, TIMESTEP, dtSq);
 
         // C. Sensory & Consumption
-        const sensoryInput = this.updateBotSensory(bot);
+        const sensoryInput = 0; // Placeholder for now
         const energyGained = this.checkFoodConsumption(bot);
         
         // Calculate Irruption (Will) and Absorption (Sensation)
-        const speed = Math.sqrt(Math.pow(bot.centerOfMass.x - bot.startPosition.x, 2)); // Simplified
+        // Irruption is based on active bioelectric activity
         bot.irruption = Math.min(1.0, activeCharge * 0.1);
+        // Absorption is based on energy intake and sensory events
         bot.absorption = Math.min(1.0, sensoryInput + (energyGained > 0 ? 0.5 : 0));
 
         // Mitosis Check
-        // Only allow if:
-        // 1. Energy threshold met (Strict 8000)
-        // 2. Bot is mature (age > 800 ticks, approx 13s)
-        // 3. Population cap not reached
-        // 4. Extremely small probability (0.00015 = 0.015% per tick) to stagger bursts significantly
-        //    Previous was 0.001 (0.1%), so this is ~6.6x slower, plus higher energy threshold ~8x effective reduction.
         if (bot.energy > MITOSIS_THRESHOLD && 
             bot.age > 800 && 
             (botCount + newBots.length) < maxBots &&
@@ -253,6 +248,24 @@ export class PhysicsEngine {
     }
   }
 
+  private checkFoodConsumption(bot: Xenobot): number {
+      let energyGained = 0;
+      for (let i = this.food.length - 1; i >= 0; i--) {
+          const f = this.food[i];
+          const dx = bot.centerOfMass.x - f.x;
+          const dy = bot.centerOfMass.y - f.y;
+          const dSq = dx*dx + dy*dy;
+          
+          if (dSq < 900) { 
+              bot.energy += f.energy;
+              energyGained += f.energy;
+              this.food.splice(i, 1);
+              this.events.push('EAT');
+          }
+      }
+      return energyGained;
+  }
+
   private performMitosis(bot: Xenobot): Xenobot | null {
       // Simple splitting logic
       bot.energy /= 2;
@@ -272,7 +285,6 @@ export class PhysicsEngine {
       return child;
   }
 
-  // --- RESTORED: Advanced Internal Physics ---
   private updateInternalStructure(bot: Xenobot, time: number): number {
       let activeCharge = 0;
       const particles = bot.particles;
@@ -286,7 +298,7 @@ export class PhysicsEngine {
       const coupling = 0.9 + (memory * 0.1); 
 
       // 1. Internal Repulsion (Self-Collision Prevention)
-      const SELF_NODE_RADIUS_SQ = 6 * 6; // Reduced from 8 to 6 for tighter packing
+      const SELF_NODE_RADIUS_SQ = 6 * 6; 
       
       for (let i = 0; i < particles.length; i++) {
           for (let j = i + 1; j < particles.length; j++) {
@@ -297,7 +309,7 @@ export class PhysicsEngine {
               const dSq = dx*dx + dy*dy;
               if (dSq < SELF_NODE_RADIUS_SQ && dSq > 0.001) {
                   const dist = Math.sqrt(dSq);
-                  const overlap = 6 - dist; // Adjusted to match new radius
+                  const overlap = 6 - dist; 
                   const force = overlap * 2.0; 
                   const nx = dx / dist;
                   const ny = dy / dist;
@@ -337,8 +349,6 @@ export class PhysicsEngine {
           const dvx = v2x - v1x;
           const dvy = v2y - v1y;
           
-          // UPDATED: Increased Damping Coefficient by 1.2x
-          // Previous: 54.675 -> New: 65.61
           const dampingCoeff = 65.61; 
 
           p1.force.x += dvx * dampingCoeff;
@@ -370,8 +380,6 @@ export class PhysicsEngine {
 
           const diff = (dist - targetLen) / dist;
           
-          // UPDATED: Increased Stiffness Multiplier by 1.2x
-          // Previous: 109.35 -> New: 131.22
           const forceVal = (s.stiffness * 131.22) * diff;
 
           const stress = Math.abs(diff); 
@@ -409,7 +417,6 @@ export class PhysicsEngine {
       return activeCharge;
   }
 
-  // --- RESTORED: Material Physics (Fluid Dynamics) ---
   private performMaterialPhysics(bot: Xenobot, time: number, dt: number, dtSq: number) {
     const particles = bot.particles;
     const pCount = particles.length;
@@ -483,7 +490,6 @@ export class PhysicsEngine {
         p.force.x = Math.max(-MAX_FORCE, Math.min(MAX_FORCE, p.force.x));
         p.force.y = Math.max(-MAX_FORCE, Math.min(MAX_FORCE, p.force.y));
 
-        // Increased damping by factor of 1.05 to reduce jitter
         let vx = (p.pos.x - p.oldPos.x) * (friction / 1.05);
         let vy = (p.pos.y - p.oldPos.y) * (friction / 1.05);
 
@@ -496,7 +502,6 @@ export class PhysicsEngine {
         p.pos.x += vx + p.force.x * dtSq;
         p.pos.y += vy + p.force.y * dtSq;
 
-        // Reset forces
         p.force.x = 0;
         p.force.y = 0;
 
@@ -510,7 +515,6 @@ export class PhysicsEngine {
     }
   }
 
-  // --- Refined Cilia Logic (Metachronal Wave) ---
   private calculateCiliaForce(bot: Xenobot, p: Particle, time: number, avgVx: number, avgVy: number) {
       const memory = bot.genome.bioelectricMemory || 0.5;
       
@@ -520,51 +524,35 @@ export class PhysicsEngine {
       const relX = (p.pos.x - bot.centerOfMass.x);
       const relY = (p.pos.y - bot.centerOfMass.y);
       
-      // Calculate position along the "spine" (longitudinal axis defined by heading)
-      // Positive projection means "in front", negative means "behind" center of mass
       const longitudinalProjection = (relX * hx + relY * hy);
       
-      // Metachronal Wave Properties
-      // Wave travels backwards along the body to push fluid backwards (propelling bot forward)
-      // High memory = stronger coordination = longer, faster waves
       const waveLength = 120.0 + (memory * 250.0); 
       const waveSpeed = 3.0 + (memory * 2.0);
 
-      // The phase depends on position along the body
       const spatialPhase = longitudinalProjection / waveLength;
       
-      // Temporal component with breathing rhythm (frequency modulation)
       const breathing = 1.0 + 0.2 * Math.sin(time * 0.5); 
       const temporalPhase = time * waveSpeed * breathing;
 
-      // Metachronal Wave Function: sin(k*x - w*t)
-      // We subtract temporal phase so wave travels in positive x direction relative to body frame?
-      // Actually, for propulsion, effective stroke usually travels. 
       const cycle = (spatialPhase * Math.PI * 2.0) - temporalPhase;
       
       const rawBeat = Math.sin(cycle);
       
-      // Asymmetric Stroke (Power vs Recovery)
       let thrustMag = 0;
       let lateralMag = 0;
 
       if (rawBeat > 0.2) {
-          // Power Stroke
           const power = Math.pow(rawBeat, 2.0); 
           thrustMag = CILIA_FORCE * 3.0 * power;
-          // Slight lateral kick during power stroke
           lateralMag = CILIA_FORCE * 0.5 * Math.cos(cycle); 
       } else {
-          // Recovery Stroke (Drag)
-          thrustMag = CILIA_FORCE * 0.1 * rawBeat; // Negative drag
+          thrustMag = CILIA_FORCE * 0.1 * rawBeat; 
           lateralMag = 0;
       }
 
-      // Apply forces relative to heading
       let cx = (thrustMag * hx) + (lateralMag * -hy);
       let cy = (thrustMag * hy) + (lateralMag * hx);
       
-      // Fluid Drag / Cohesion Damping
       const pVx = p.pos.x - p.oldPos.x;
       const pVy = p.pos.y - p.oldPos.y;
       const cohesionStrength = 8.0 * memory; 
@@ -572,7 +560,6 @@ export class PhysicsEngine {
       cx += (avgVx - pVx) * cohesionStrength;
       cy += (avgVy - pVy) * cohesionStrength;
 
-      // Random Noise (decreases with memory/intelligence)
       if (memory < 0.3) {
           const noiseScale = (0.3 - memory) * 0.5;
           cx += (Math.random() - 0.5) * noiseScale * CILIA_FORCE;
@@ -617,25 +604,18 @@ export class PhysicsEngine {
                         p2.pos.x -= moveX;
                         p2.pos.y -= moveY;
 
-                        // Calculate impact velocity for kinetic-based metabolic exchange
                         const v1x = p1.pos.x - p1.oldPos.x;
                         const v1y = p1.pos.y - p1.oldPos.y;
                         const v2x = p2.pos.x - p2.oldPos.x;
                         const v2y = p2.pos.y - p2.oldPos.y;
                         
-                        // Relative velocity along normal
                         const rvx = v1x - v2x;
                         const rvy = v1y - v2y;
                         const impactVelocity = Math.abs(rvx * nx + rvy * ny);
 
-                        // Reduced mass represents the effective inertial resistance of the collision pair
-                        // Formula: (m1 * m2) / (m1 + m2)
                         const reducedMass = (p1.mass * p2.mass) / (p1.mass + p2.mass);
 
-                        // Metabolic energy transfer logic
                         const baseTransferRate = 0.005;
-                        // Kinetic factor scaled by reduced mass to simulate momentum intensity
-                        // Heavier particles (like muscles) transfer more energy.
                         const kineticFactor = impactVelocity * reducedMass * 0.04; 
 
                         const totalRate = Math.min(0.15, baseTransferRate + kineticFactor);
@@ -647,9 +627,9 @@ export class PhysicsEngine {
                         b2.energy += transfer;
 
                         b1.lastCollisionTime = Date.now();
-                        b1.lastCollisionPoint = { x: (p1.pos.x + p2.pos.x) / 2, y: (p1.pos.y + p2.pos.y) / 2 };
+                        b1.lastCollisionPoint = { x: (p1.pos.x + p2.pos.x) * 0.5, y: (p1.pos.y + p2.pos.y) * 0.5 };
                         
-                        if (Math.abs(transfer) > 1.0 || impactVelocity > 1.0) this.events.push('COLLISION');
+                        if (transfer > 0.5) this.events.push('COLLISION');
                     }
                 }
             }
@@ -657,122 +637,47 @@ export class PhysicsEngine {
       }
   }
 
-  private checkFoodConsumption(bot: Xenobot): number {
-      const com = bot.centerOfMass;
-      const botRadius = (bot.genome.gridSize * this.config.gridScale) / 1.5;
-      let energyGained = 0;
-
-      for (let i = this.food.length - 1; i >= 0; i--) {
-          const f = this.food[i];
-          const dx = com.x - f.x;
-          const dy = com.y - f.y;
-          const distSq = dx*dx + dy*dy;
-          
-          if (distSq < (botRadius + FOOD_RADIUS) ** 2) {
-               let eaten = false;
-               for (const p of bot.particles) {
-                   const pdx = p.pos.x - f.x;
-                   const pdy = p.pos.y - f.y;
-                   if (pdx*pdx + pdy*pdy < (FOOD_RADIUS + 10) ** 2) {
-                       eaten = true;
-                       break;
-                   }
-               }
-
-               if (eaten) {
-                   bot.energy += f.energy;
-                   energyGained += f.energy;
-                   this.food.splice(i, 1);
-                   this.events.push('EAT'); 
-               }
-          }
-      }
-      return energyGained;
-  }
-  
-  private updateBotSensory(bot: Xenobot): number {
-    let targetHeading = bot.heading;
-    let shortestDistSq = Infinity;
-    const SENSOR_RADIUS_SQ = 600 * 600;
-    let sensation = 0;
-    
-    for (const f of this.food) {
-        const dx = f.x - bot.centerOfMass.x;
-        const dy = f.y - bot.centerOfMass.y;
-        const dSq = dx*dx + dy*dy;
-        if (dSq < SENSOR_RADIUS_SQ && dSq < shortestDistSq) {
-            shortestDistSq = dSq;
-            targetHeading = Math.atan2(dy, dx);
-            sensation = 1.0 - (dSq / SENSOR_RADIUS_SQ);
-        }
-    }
-    
-    if (shortestDistSq < Infinity) {
-        const angleDiff = targetHeading - bot.heading;
-        let dTheta = angleDiff;
-        while (dTheta <= -Math.PI) dTheta += Math.PI*2;
-        while (dTheta > Math.PI) dTheta -= Math.PI*2;
-        bot.heading += dTheta * 0.05; 
-    } else {
-        bot.heading += (Math.random() - 0.5) * 0.1;
-    }
-    return sensation;
-  }
-
   public evolvePopulation(generation: number): boolean {
-      const currentPop = this.bots.filter(b => !b.isDead).map(b => {
-          b.genome.fitness = (b.centerOfMass.x - b.startPosition.x);
-          b.genome.fitness += b.energy * 0.1;
-          
-          // CAPTURE CURRENT POSITION FOR NEXT GEN
-          b.genome.originX = b.centerOfMass.x;
-          b.genome.originY = b.centerOfMass.y;
-          
-          return b.genome;
-      });
+    const currentGenomes = this.bots.map(b => {
+        const dist = b.centerOfMass.x - b.startPosition.x;
+        b.genome.fitness = b.energy + dist * 2;
+        return b.genome;
+    });
+    
+    const newGenomes = algoEvolve(currentGenomes, generation, this.config.populationSize);
+    
+    if (newGenomes.length === 0) return false;
 
-      if (currentPop.length < 2) return false;
+    const nextBots: Xenobot[] = [];
+    newGenomes.forEach(g => {
+        const existing = this.bots.find(b => b.id === g.id);
+        if (existing && !existing.isDead) {
+            nextBots.push(existing);
+        } else {
+            let startX = 0;
+            if (typeof g.originX === 'number') startX = g.originX + (Math.random()-0.5)*50;
+            else startX = (Math.random()-0.5)*1000;
 
-      const nextGenGenomes = evolvePopulation(currentPop, generation, this.config.populationSize);
-      
-      this.bots = nextGenGenomes.map(g => {
-         let startX = 0;
-         let startY = 200; // Default
+            const bot = this.createBot(g, startX, 200 + Math.random() * 100);
+            nextBots.push(bot);
+        }
+    });
 
-         if (typeof g.originX === 'number' && typeof g.originY === 'number') {
-             // Use parent-derived position
-             startX = g.originX;
-             startY = g.originY;
-             // Add jitter to avoid perfect overlap
-             startX += (Math.random() - 0.5) * 20;
-             startY += (Math.random() - 0.5) * 20;
-         } else if (typeof g.originX === 'number') {
-             // Fallback if only X
-             startX = g.originX;
-             startY = 200 + Math.random() * 200;
-         } else {
-             // Fallback default
-             startX = (Math.random() - 0.5) * 400;
-             startY = 200 + Math.random() * 200;
-         }
-         
-         return this.createBot(g, startX, startY);
-      });
-
-      return true;
+    this.bots = nextBots;
+    return true;
   }
 
   public getPopulationStats(generation: number): GeneticStats {
       let skin = 0, heart = 0, neuron = 0;
       this.bots.forEach(b => {
-          if (b.isDead) return;
-          b.genome.genes.forEach(row => row.forEach(cell => {
-              if (cell === CellType.SKIN) skin++;
-              if (cell === CellType.HEART) heart++;
-              if (cell === CellType.NEURON) neuron++;
-          }));
+          b.genome.genes.forEach(row => {
+              row.forEach(cell => {
+                  if (cell === CellType.SKIN) skin++;
+                  if (cell === CellType.HEART) heart++;
+                  if (cell === CellType.NEURON) neuron++;
+              });
+          });
       });
-      
       return {
           generation,
           skin,
@@ -783,18 +688,10 @@ export class PhysicsEngine {
   }
 
   public smoothRenderPositions() {
-      const alpha = 0.2;
       this.bots.forEach(b => {
           b.particles.forEach(p => {
-              const dx = p.pos.x - p.renderPos.x;
-              const dy = p.pos.y - p.renderPos.y;
-              if (dx*dx + dy*dy > 40000) {
-                  p.renderPos.x = p.pos.x;
-                  p.renderPos.y = p.pos.y;
-              } else {
-                  p.renderPos.x += dx * alpha;
-                  p.renderPos.y += dy * alpha;
-              }
+              p.renderPos.x = p.pos.x;
+              p.renderPos.y = p.pos.y;
           });
       });
   }

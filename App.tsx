@@ -8,9 +8,9 @@ import { GenomeVisualizer } from './components/GenomeVisualizer';
 import { TitleScreen } from './components/TitleScreen';
 import { SettingsPanel } from './components/SettingsPanel';
 import { HelpModal } from './components/HelpModal';
-import { Xenobot, Genome, AnalysisResult, CameraState, SimulationConfig, SaveData, Food } from './types';
-import { DEFAULT_CONFIG, INITIAL_POPULATION_SIZE, EVOLUTION_INTERVAL } from './constants';
-import { ScanEye, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Xenobot, Genome, AnalysisResult, CameraState, SimulationConfig, Food } from './types';
+import { DEFAULT_CONFIG, EVOLUTION_INTERVAL } from './constants';
+import { ScanEye } from 'lucide-react';
 import { PhysicsEngine } from './services/physicsEngine';
 import { createRandomGenome } from './services/geneticAlgorithm';
 
@@ -116,13 +116,18 @@ const App: React.FC = () => {
       const engine = engineRef.current;
       if (!engine) return;
       
+      // Perform evolution step
       const evolutionOccurred = engine.evolvePopulation(generation);
   
+      // Always increment the cycle counter to reflect the passage of evolutionary epochs
+      setGeneration(g => g + 1);
+
+      // Only update population ref if actual changes to gene pool happened (optimization)
       if (evolutionOccurred) {
-          setGeneration(g => g + 1);
           populationRef.current = engine.bots.map(b => b.genome);
       }
-      // Reset timer
+      
+      // Reset cycle timer
       evolutionTimerRef.current = 0;
       setEvolutionProgress(0);
   };
@@ -152,15 +157,15 @@ const App: React.FC = () => {
 
       if (isRunning) {
           engine.update(time / 1000); // Physics Update
-          // IMPORTANT: Sync the Ref with the latest array from engine
-          // Because engine methods like removeBot might replace the array reference
+          
+          // Sync Refs
           botsRef.current = engine.bots; 
           foodRef.current = engine.food;
 
           totalTickRef.current += 1;
           evolutionTimerRef.current += 1;
 
-          // Update Progress Bar State (Throttled to every 4 ticks to save React overhead ~15fps update)
+          // Update Progress Bar State (Throttled)
           if (totalTickRef.current % 4 === 0) {
               const progress = Math.min(1, evolutionTimerRef.current / EVOLUTION_INTERVAL);
               setEvolutionProgress(progress);
@@ -191,23 +196,23 @@ const App: React.FC = () => {
           let dx = 0, dy = 0;
           const speed = 15 / camera.zoom;
           
-          if (keysPressed.current.has('a') || keysPressed.current.has('arrowleft')) dx -= speed; // Move camera left
-          if (keysPressed.current.has('d') || keysPressed.current.has('arrowright')) dx += speed; // Move camera right
-          if (keysPressed.current.has('w') || keysPressed.current.has('arrowup')) dy -= speed; // Move camera up
-          if (keysPressed.current.has('s') || keysPressed.current.has('arrowdown')) dy += speed; // Move camera down
+          if (keysPressed.current.has('a') || keysPressed.current.has('arrowleft')) dx -= speed; 
+          if (keysPressed.current.has('d') || keysPressed.current.has('arrowright')) dx += speed; 
+          if (keysPressed.current.has('w') || keysPressed.current.has('arrowup')) dy -= speed; 
+          if (keysPressed.current.has('s') || keysPressed.current.has('arrowdown')) dy += speed; 
           
           if (dx !== 0 || dy !== 0) {
               setCamera(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
           }
       } 
-      // Auto Follow Logic (Group A - Natives)
+      // Auto Follow Logic
       else if (isAutoCameraRef.current && isRunning) {
           const groupA = engine.bots.filter(b => b.groupId === 0 && !b.isDead);
           
           if (groupA.length > 0) {
               let avgX = 0, avgY = 0;
               let count = 0;
-              // Follow the highest energy bots (the successful ones)
+              // Follow the highest energy bots (success bias)
               const sorted = [...groupA].sort((a,b) => b.energy - a.energy);
               const topHalf = sorted.slice(0, Math.max(1, Math.ceil(sorted.length / 2)));
 
@@ -221,11 +226,8 @@ const App: React.FC = () => {
                   avgX /= count;
                   avgY /= count;
 
-                  // Target: Keep swarm center at left 35% of screen (0.15 offset from center)
                   const targetCamX = avgX + (dimensions.width * 0.15 / camera.zoom); 
                   const targetCamY = avgY;
-
-                  // Tuned lerp for smoother follow (0.05)
                   const lerp = 0.05; 
                   
                   setCamera(prev => ({
@@ -284,7 +286,6 @@ const App: React.FC = () => {
      if (isAnalyzing || !bestGenomeA) return;
      setIsAnalyzing(true);
      
-     // Find the best bot object
      const engine = engineRef.current;
      if (engine) {
          const bot = engine.bots.find(b => b.genome.id === bestGenomeA.id);
@@ -352,7 +353,11 @@ const App: React.FC = () => {
                     initSimulation(data.config, data.population, data.generation);
                     setShowSettings(false);
                 }}
-                onClose={() => setShowSettings(false)}
+                onClose={() => {
+                    // Just close and resume, do NOT reset simulation
+                    setShowSettings(false);
+                    setIsRunning(true);
+                }}
                 population={populationRef.current}
                 generation={generation}
              />

@@ -1,6 +1,7 @@
+
 import React, { useState, useRef } from 'react';
 import { SimulationConfig, SaveData, Genome } from '../types';
-import { Save, Upload, RefreshCw, X, Sliders } from 'lucide-react';
+import { Save, Upload, RefreshCw, X, Sliders, PlayCircle } from 'lucide-react';
 
 interface SettingsPanelProps {
   config: SimulationConfig;
@@ -217,18 +218,25 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="p-6 border-t border-slate-800 bg-slate-950/50">
+        <div className="p-6 border-t border-slate-800 bg-slate-950/50 flex gap-3">
+            <button 
+                onClick={onClose}
+                className="flex-1 bg-slate-800 text-slate-300 font-bold font-display py-3 rounded hover:bg-slate-700 transition-colors flex items-center justify-center gap-2 border border-slate-700"
+            >
+                <PlayCircle size={18} />
+                RESUME (NO CHANGES)
+            </button>
             <button 
                 onClick={() => onSave(localConfig)}
-                className="w-full bg-neon-cyan text-black font-bold font-display py-3 rounded hover:bg-cyan-400 transition-colors flex items-center justify-center gap-2"
+                className="flex-1 bg-neon-cyan text-black font-bold font-display py-3 rounded hover:bg-cyan-400 transition-colors flex items-center justify-center gap-2"
             >
-                <RefreshCw size={18} className="animate-spin-slow" />
-                APPLY & RESTART SIMULATION
+                <RefreshCw size={18} />
+                APPLY & RESTART
             </button>
-            <p className="text-center text-[10px] text-slate-500 mt-2">
-                Warning: Changing configuration requires reconstructing the physics world.
-            </p>
         </div>
+        <p className="text-center text-[10px] text-slate-500 mb-4 px-6">
+             Applying changes will reconstruct the physics world and restart the simulation from Generation 1.
+        </p>
 
       </div>
     </div>

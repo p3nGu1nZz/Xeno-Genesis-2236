@@ -435,6 +435,25 @@ export class PhysicsEngine {
     const FLUID_DENSITY = 0.04; 
     const PARTICLE_VOLUME = 30.0;
     const BASE_DRAG = 0.15;
+    
+    // Calculate connectivity ratio to determine structural drag
+    // Ideally, a fully connected node has 4-8 springs. In this simulation model, 
+    // a connectivity ratio > 3.0 indicates a dense, well-connected lattice.
+    const connectivityRatio = bot.springs.length / (pCount || 1);
+    const isWellConnected = connectivityRatio > 3.0; // > 75% of max connections
+    
+    // Maturation check to avoid penalizing new spawns
+    const isMature = bot.age > 100; 
+
+    // Calculate structural drag modifier
+    let structuralDragMod = 1.0;
+    if (isWellConnected && isMature) {
+        // Denser organisms push more fluid, experiencing slightly higher drag
+        structuralDragMod = 1.25; 
+    } else {
+        // Fragmented or young bots are "leakier" to fluid
+        structuralDragMod = 0.95;
+    }
 
     for (let i = 0; i < pCount; i++) {
         const p = particles[i];
@@ -448,8 +467,13 @@ export class PhysicsEngine {
         // 2. Fluid Drag
         const vx = (p.pos.x - p.oldPos.x); 
         const vy = (p.pos.y - p.oldPos.y);
+        
+        // Bioelectric charge increases local viscosity (simulating mucus/secretion)
         const viscosityMod = 1.0 + (p.charge * 5.0);
-        const dragFactor = BASE_DRAG * viscosityMod;
+        
+        // Apply structural modifier
+        const dragFactor = BASE_DRAG * viscosityMod * structuralDragMod;
+        
         const fDragX = -vx * dragFactor;
         const fDragY = -vy * dragFactor;
 

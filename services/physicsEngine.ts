@@ -9,13 +9,14 @@ const MAX_VELOCITY = 20.0;
 const PARTICLE_MAINTENANCE_COST = 0.005;
 const BOUNDARY_LIMIT = 2500; 
 const COLLISION_RADIUS = 12; 
-const BREAKING_THRESHOLD = 4.5; // Significantly increased to prevent accidental tearing
+const BREAKING_THRESHOLD = 4.5; 
 
 export class PhysicsEngine {
   bots: Xenobot[] = [];
   food: Food[] = [];
   config: SimulationConfig;
   groundY: number;
+  private nextGroupId = 2; // Start after 0 and 1 to ensure unique IDs for new groups
 
   constructor(config: SimulationConfig = DEFAULT_CONFIG) {
     this.config = config;
@@ -52,13 +53,15 @@ export class PhysicsEngine {
   }
 
   createBot(genome: Genome, startX: number, startY: number): Xenobot {
-    const particles: Particle[] = [];
-    const springs: Spring[] = [];
+    let particles: Particle[] = [];
+    let springs: Spring[] = [];
     const { genes, gridSize } = genome;
     const scale = this.config.gridScale;
 
+    // Temporary map to track particle indices during creation
     const particleMap: number[][] = Array(gridSize).fill(null).map(() => Array(gridSize).fill(-1));
 
+    // 1. Create Particles
     for (let y = 0; y < gridSize; y++) {
       for (let x = 0; x < gridSize; x++) {
         if (genes[y][x] !== CellType.EMPTY) {
@@ -78,6 +81,7 @@ export class PhysicsEngine {
       }
     }
 
+    // 2. Create Springs
     const neighbors = [
       { dx: 1, dy: 0, dist: 1 },       
       { dx: 0, dy: 1, dist: 1 },       
@@ -98,28 +102,88 @@ export class PhysicsEngine {
             if (nx >= 0 && nx < gridSize && ny >= 0 && ny < gridSize) {
                 const p2Idx = particleMap[ny][nx];
                 if (p2Idx !== -1) {
-                const type1 = genes[y][x];
-                const type2 = genes[ny][nx];
-                
-                const isMuscle = (type1 === CellType.HEART || type2 === CellType.HEART);
-                const isNeuron = (type1 === CellType.NEURON || type2 === CellType.NEURON);
-                
-                // Very stiff springs to keep shape
-                const stiffness = isNeuron ? 0.98 : 0.7; 
+                    const type1 = genes[y][x];
+                    const type2 = genes[ny][nx];
+                    
+                    const isMuscle = (type1 === CellType.HEART || type2 === CellType.HEART);
+                    const isNeuron = (type1 === CellType.NEURON || type2 === CellType.NEURON);
+                    
+                    const stiffness = isNeuron ? 0.98 : 0.7; 
 
-                springs.push({
-                    p1: p1Idx,
-                    p2: p2Idx,
-                    restLength: dist * scale,
-                    currentRestLength: dist * scale,
-                    stiffness,
-                    isMuscle,
-                    phaseOffset: (x + y) * 0.5
-                });
+                    springs.push({
+                        p1: p1Idx,
+                        p2: p2Idx,
+                        restLength: dist * scale,
+                        currentRestLength: dist * scale,
+                        stiffness,
+                        isMuscle,
+                        phaseOffset: (x + y) * 0.5
+                    });
                 }
             }
         }
       }
+    }
+
+    // 3. Prune Orphan Nodes (Ensure fully connected graph)
+    if (particles.length > 0) {
+        // Build adjacency
+        const adj: number[][] = Array(particles.length).fill(null).map(() => []);
+        springs.forEach(s => {
+            adj[s.p1].push(s.p2);
+            adj[s.p2].push(s.p1);
+        });
+
+        // Find largest cluster using BFS
+        const visited = new Set<number>();
+        const clusters: number[][] = [];
+        
+        for (let i = 0; i < particles.length; i++) {
+            if (!visited.has(i)) {
+                const cluster: number[] = [];
+                const q = [i];
+                visited.add(i);
+                while (q.length) {
+                    const curr = q.shift()!;
+                    cluster.push(curr);
+                    for (const n of adj[curr]) {
+                        if (!visited.has(n)) {
+                            visited.add(n);
+                            q.push(n);
+                        }
+                    }
+                }
+                clusters.push(cluster);
+            }
+        }
+
+        // Keep only largest cluster
+        clusters.sort((a, b) => b.length - a.length);
+        const largestCluster = new Set(clusters[0]);
+
+        if (largestCluster.size < particles.length) {
+            const newParticles: Particle[] = [];
+            const oldToNew = new Map<number, number>();
+            
+            particles.forEach((p, idx) => {
+                if (largestCluster.has(idx)) {
+                    oldToNew.set(idx, newParticles.length);
+                    newParticles.push(p);
+                }
+            });
+
+            const newSprings: Spring[] = [];
+            springs.forEach(s => {
+                if (largestCluster.has(s.p1) && largestCluster.has(s.p2)) {
+                    s.p1 = oldToNew.get(s.p1)!;
+                    s.p2 = oldToNew.get(s.p2)!;
+                    newSprings.push(s);
+                }
+            });
+
+            particles = newParticles;
+            springs = newSprings;
+        }
     }
 
     const match = genome.color.match(/hsl\((\d+\.?\d*)/);
@@ -146,8 +210,6 @@ export class PhysicsEngine {
   }
 
   evolvePopulation(currentGeneration: number): boolean {
-      // Traditional genetic evolution fallback if needed
-      // But primary reproduction is now via Mitosis logic below
       return false;
   }
 
@@ -188,7 +250,8 @@ export class PhysicsEngine {
       
       this.updateBot(bot, time, dt, dtSq, fluidBaseFriction);
       
-      // Deliberate Mitosis Logic
+      // Deliberate Mitosis Logic (Reproduction)
+      // When energy exceeds threshold, trigger split into two smaller bots
       if (bot.energy > MITOSIS_THRESHOLD) {
           this.triggerMitosis(bot);
       }
@@ -211,7 +274,6 @@ export class PhysicsEngine {
       if (bot.particles.length < 6) return; // Too small to split
 
       // 1. Calculate Principal Axis (Line of separation)
-      // Find min/max bounds
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
       bot.particles.forEach(p => {
           if (p.pos.x < minX) minX = p.pos.x;
@@ -228,7 +290,6 @@ export class PhysicsEngine {
       const isHorizontalSplit = width > height;
 
       // 2. Sever Springs crossing the axis
-      // We iterate backwards to remove safely
       for (let i = bot.springs.length - 1; i >= 0; i--) {
           const s = bot.springs[i];
           const p1 = bot.particles[s.p1];
@@ -236,12 +297,12 @@ export class PhysicsEngine {
 
           let shouldCut = false;
           if (isHorizontalSplit) {
-              // Cut vertically: if one is left of COM and other is right
+              // Cut vertically
               if ((p1.pos.x < com.x && p2.pos.x > com.x) || (p1.pos.x > com.x && p2.pos.x < com.x)) {
                   shouldCut = true;
               }
           } else {
-              // Cut horizontally: if one is above COM and other is below
+              // Cut horizontally
               if ((p1.pos.y < com.y && p2.pos.y > com.y) || (p1.pos.y > com.y && p2.pos.y < com.y)) {
                   shouldCut = true;
               }
@@ -315,9 +376,7 @@ export class PhysicsEngine {
       const mainClusterIndices = new Set(clusters[0]);
       const splitClusterIndices = clusters[1]; 
 
-      if (splitClusterIndices.length < 3) {
-          return null; 
-      }
+      if (splitClusterIndices.length < 3) return null; 
 
       const newBotParticles: Particle[] = [];
       const newBotSprings: Spring[] = [];
@@ -368,10 +427,12 @@ export class PhysicsEngine {
       }
       bot.springs = validSprings;
 
-      // Construct the new Bot
-      // Mutate the genome slightly for the new offspring
+      // Mutation for offspring
       const newGenome = mutate(bot.genome);
       newGenome.id = uid();
+
+      // IMPORTANT: Assign a new unique Group ID to the offspring
+      const newGroupId = this.nextGroupId++;
 
       const newBot: Xenobot = {
           id: uid(),
@@ -382,15 +443,15 @@ export class PhysicsEngine {
           startPosition: { x: 0, y: 0 },
           isDead: false,
           totalCharge: 0,
-          groupId: bot.groupId, 
-          energy: bot.energy * 0.5, 
+          groupId: newGroupId, // Separate entity from parent
+          energy: bot.energy * 0.5, // Reduced energy
           age: 0, 
           heading: bot.heading + Math.PI + (Math.random() - 0.5), 
           irruption: 0,
           absorption: 0
       };
       
-      bot.energy *= 0.5; 
+      bot.energy *= 0.5; // Parent energy reduced
 
       return newBot;
   }
@@ -413,10 +474,12 @@ export class PhysicsEngine {
             const dy = p.pos.y - p.renderPos.y;
             const distSq = dx*dx + dy*dy;
             
+            // Snap if distance is huge
             if (distSq > snapThresholdSq) {
                 p.renderPos.x = p.pos.x;
                 p.renderPos.y = p.pos.y;
             } else if (distSq > sleepThresholdSq) {
+                // Lerp: new = current + (target - current) * alpha
                 p.renderPos.x += dx * alpha;
                 p.renderPos.y += dy * alpha;
             } else {
@@ -442,7 +505,7 @@ export class PhysicsEngine {
                 const dx = b1.centerOfMass.x - b2.centerOfMass.x;
                 const dy = b1.centerOfMass.y - b2.centerOfMass.y;
                 const distSq = dx*dx + dy*dy;
-                if (distSq > 160000) continue; // 400^2 optimized broadphase
+                if (distSq > 160000) continue; 
 
                 for (const p1 of b1.particles) {
                     for (const p2 of b2.particles) {
@@ -472,7 +535,7 @@ export class PhysicsEngine {
   }
 
   private applySocialForces(botCount: number) {
-      const GROUP_REPULSION_RADIUS = 500; // Significantly increased to keep groups apart
+      const GROUP_REPULSION_RADIUS = 500; 
       const GROUP_FORCE = 1.0; 
       const SELF_REPULSION_RADIUS = 150; 
       const SELF_FORCE = 0.3;
@@ -495,7 +558,7 @@ export class PhysicsEngine {
               let force = 0;
 
               if (b1.groupId !== b2.groupId) {
-                  // Strong Inter-group repulsion
+                  // Strong Inter-group repulsion for distinct entities
                   force = ((GROUP_REPULSION_RADIUS - dist) / GROUP_REPULSION_RADIUS) * GROUP_FORCE;
               } else if (dist < SELF_REPULSION_RADIUS) {
                   // Intra-group spacing
@@ -511,7 +574,7 @@ export class PhysicsEngine {
           }
       }
   }
-
+  
   private distributeForce(bot: Xenobot, fx: number, fy: number) {
       const count = bot.particles.length;
       if (count === 0) return;
@@ -564,21 +627,44 @@ export class PhysicsEngine {
     avgVx /= (pCount || 1);
     avgVy /= (pCount || 1);
 
+    // FLUID SIMULATION CONSTANTS
+    const FLUID_DENSITY = 0.04; 
+    const PARTICLE_VOLUME = 30.0;
+    const BASE_DRAG = 0.05;
+
     for (let i = 0; i < pCount; i++) {
         const p = particles[i];
         
         bot.energy -= PARTICLE_MAINTENANCE_COST;
         
-        p.force.x = 0;
-        p.force.y = this.config.gravity; 
-        const invGroundY = 1.0 / (this.groundY || 1);
-        let depthRatio = Math.max(0, Math.min(1, p.pos.y * invGroundY));
-        p.force.y -= this.config.gravity * (0.9 + depthRatio * 0.1);
+        // 1. Gravity (Down)
+        const fGravity = p.mass * this.config.gravity;
 
-        p.force.x += Math.sin(time * 0.5 + depthRatio * 4.0) * 0.08;
-        
-        p.force.x += (Math.random() - 0.5) * 0.5;
-        p.force.y += (Math.random() - 0.5) * 0.5;
+        // 2. Buoyancy (Up)
+        // Density differential drives upward force.
+        const fBuoyancy = -1.0 * FLUID_DENSITY * PARTICLE_VOLUME * this.config.gravity;
+
+        // 3. Fluid Drag (Viscous Resistance)
+        const vx = (p.pos.x - p.oldPos.x); 
+        const vy = (p.pos.y - p.oldPos.y);
+
+        // Charge affects local viscosity/interaction
+        const viscosityMod = 1.0 + (p.charge * 5.0);
+        const dragFactor = BASE_DRAG * viscosityMod;
+
+        const fDragX = -vx * dragFactor;
+        const fDragY = -vy * dragFactor;
+
+        // Apply Fluid Forces
+        p.force.x = 0; 
+        p.force.y = 0; 
+
+        p.force.y += fGravity + fBuoyancy + fDragY;
+        p.force.x += fDragX;
+
+        // Brownian / Turbulence
+        p.force.x += (Math.random() - 0.5) * 0.2;
+        p.force.y += (Math.random() - 0.5) * 0.2;
 
         const { cx, cy } = this.calculateCiliaForce(bot, p, time, avgVx, avgVy);
         ciliaForcesX[i] = cx;
@@ -611,20 +697,36 @@ export class PhysicsEngine {
     const energyGained = this.checkFoodConsumption(bot);
     if (energyGained > 0) absorptionEvent += 2.0;
 
+    // --- Boundary Stress Logic ---
     const distFromCenter = Math.abs(bot.centerOfMass.x);
-    if (distFromCenter > BOUNDARY_LIMIT) {
-        bot.energy -= 0.8; 
+    // Boundary zone starts 500 units before the hard limit
+    const boundaryZoneStart = BOUNDARY_LIMIT - 500;
+
+    if (distFromCenter > boundaryZoneStart) {
+        const penetration = distFromCenter - boundaryZoneStart;
+        const stressFactor = penetration / 500; // 0.0 to 1.0+
+        
+        // Exponential energy cost for staying near edge
+        const stressCost = 1.0 + (stressFactor * stressFactor) * 5.0;
+        bot.energy -= stressCost;
+
+        // Repulsive force pushing back towards center
         const pushDir = -Math.sign(bot.centerOfMass.x);
-        const overlap = distFromCenter - BOUNDARY_LIMIT;
-        const pushForce = Math.min(2.0, overlap * 0.01);
+        const pushForce = Math.min(4.0, stressFactor * 2.0);
         
         this.distributeForce(bot, pushDir * pushForce, 0);
-        absorptionEvent += 1.0; 
+        absorptionEvent += 0.5; 
+    }
+
+    if (distFromCenter > BOUNDARY_LIMIT) {
+        // Hard clamp backup (existing logic)
+        const pushDir = -Math.sign(bot.centerOfMass.x);
+        this.distributeForce(bot, pushDir * 2.0, 0);
     }
 
     return absorptionEvent;
   }
-
+  
   private updateBotSensory(bot: Xenobot): number {
     let targetHeading = bot.heading;
     let shortestDistSq = Infinity;

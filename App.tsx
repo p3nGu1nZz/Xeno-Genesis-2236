@@ -41,7 +41,8 @@ const App: React.FC = () => {
   const foodRef = useRef<Food[]>([]);
   
   // Dynamic list of representative genomes for the panel
-  const [activeGenomeGroups, setActiveGenomeGroups] = useState<{name: string, genome: Genome | null, color: string}[]>([]);
+  // Now includes energy field
+  const [activeGenomeGroups, setActiveGenomeGroups] = useState<{name: string, genome: Genome | null, color: string, energy: number}[]>([]);
   
   // Camera State
   const [camera, setCamera] = useState<CameraState>({ x: 0, y: 0, zoom: 0.55 });
@@ -133,40 +134,59 @@ const App: React.FC = () => {
     const engine = engineRef.current;
     if (!engine) return;
 
-    // Simple grouping strategy: Split by color hue ranges or ID prefix
-    // For now, we'll categorize by the original split logic (Cyan/Magenta) but handle new mutants dynamically
-    
     // Group 0: Cyans (150-230 hue)
-    const natives = engine.bots.filter(b => {
-         const match = b.genome.color.match(/hsl\((\d+\.?\d*)/);
-         const hue = match ? parseFloat(match[1]) : 0;
-         return (hue > 150 && hue < 230);
-    });
+    const natives = engine.bots.filter(b => b.groupId === 0);
 
-    // Group 1: Magentas (Everyone else)
-    const invaders = engine.bots.filter(b => {
-         const match = b.genome.color.match(/hsl\((\d+\.?\d*)/);
-         const hue = match ? parseFloat(match[1]) : 0;
-         return !(hue > 150 && hue < 230);
-    });
+    // Group 1: Magentas (Everyone else or specifically group 1)
+    const invaders = engine.bots.filter(b => b.groupId === 1);
+    
+    // Group 2+: Mutant Offspring from Mitosis
+    const mutants = engine.bots.filter(b => b.groupId > 1);
 
     const groups = [];
 
     if (natives.length > 0) {
         const bestNative = natives.reduce((prev, curr) => (curr.energy > prev.energy ? curr : prev));
+        const totalEnergy = natives.reduce((sum, b) => sum + b.energy, 0);
         groups.push({
             name: "NATIVE STRAIN (ALPHA)",
             genome: bestNative.genome,
-            color: bestNative.genome.color
+            color: bestNative.genome.color,
+            energy: totalEnergy
         });
     }
 
     if (invaders.length > 0) {
         const bestInvader = invaders.reduce((prev, curr) => (curr.energy > prev.energy ? curr : prev));
+        const totalEnergy = invaders.reduce((sum, b) => sum + b.energy, 0);
         groups.push({
             name: "INVASIVE STRAIN (BETA)",
             genome: bestInvader.genome,
-            color: bestInvader.genome.color
+            color: bestInvader.genome.color,
+            energy: totalEnergy
+        });
+    }
+    
+    // For mutants, we group by ID to avoid clutter if many splits happen
+    // Just showing the most prominent mutant group for now or an aggregate
+    if (mutants.length > 0) {
+        // Group mutants by groupId
+        const mutantGroups = new Map<number, Xenobot[]>();
+        mutants.forEach(b => {
+            if (!mutantGroups.has(b.groupId)) mutantGroups.set(b.groupId, []);
+            mutantGroups.get(b.groupId)!.push(b);
+        });
+
+        mutantGroups.forEach((bots, gId) => {
+            if (bots.length === 0) return;
+            const bestMutant = bots.reduce((prev, curr) => (curr.energy > prev.energy ? curr : prev));
+            const totalEnergy = bots.reduce((sum, b) => sum + b.energy, 0);
+             groups.push({
+                name: `MUTANT COLONY ${gId}`,
+                genome: bestMutant.genome,
+                color: bestMutant.genome.color,
+                energy: totalEnergy
+            });
         });
     }
 
@@ -254,7 +274,6 @@ const App: React.FC = () => {
                   avgY /= count;
 
                   // TARGET: Keep group center at 40% of screen width (Left Side bias)
-                  // Offset = (0.5 - 0.4) * Width / Zoom = 0.1 * Width / Zoom
                   const offset = (dimensions.width * 0.1) / camera.zoom;
                   const targetCamX = avgX + offset; 
                   const targetCamY = avgY;

@@ -2,29 +2,24 @@
 import { SimulationConfig } from './types';
 
 export const INITIAL_POPULATION_SIZE = 10; 
-export const MAX_POPULATION_CAP = 1000; 
+export const MAX_POPULATION_CAP = 500; 
 export const GRID_SIZE = 6; 
 export const EVOLUTION_INTERVAL = 60; 
-
-// World Dimensions
-export const WORLD_WIDTH = 12000; // Increased world size
-export const WORLD_HEIGHT_LIMIT = -5000;
-export const EDGE_BUFFER = 500; // Distance from wall to start feeling repulsion
 
 export const DEFAULT_CONFIG: SimulationConfig = {
   populationSize: INITIAL_POPULATION_SIZE,
   maxPopulationSize: MAX_POPULATION_CAP,
   gravity: 0.15, 
-  friction: 0.96, 
+  friction: 0.96, // Reduced drag (was 0.92) to allow more gliding/momentum
   muscleStrength: 0.25, 
   muscleSpeed: 0.1, 
   groundHeight: 1200, 
   gridScale: 48, 
   bioelectricDecay: 0.96,
   plasticity: 0.002, 
-  syncRate: 0.3, 
+  syncRate: 0.3, // Increased from 0.2 for snappier visual response to physics
   generationDuration: 0, 
-  acousticFreq: 0, 
+  acousticFreq: 0, // Hz
 };
 
 export const COLORS = {
@@ -36,11 +31,11 @@ export const COLORS = {
   BIO_FIELD: '#00f3ff', 
 };
 
-export const TIMESTEP = 1;
+export const TIMESTEP = 0.8; // Reduced from 1.0 for better stability
 export const CONSTRAINT_ITERATIONS = 6;
 
 // Biological Constants based on papers
-export const CILIA_FORCE = 0.6; 
+export const CILIA_FORCE = 0.4; // Reduced from 0.6 to prevent explosion
 export const METABOLIC_DECAY = 0.05; 
 export const INITIAL_YOLK_ENERGY = 1000; 
-export const SURFACE_TENSION = 0.005; 
+export const SURFACE_TENSION = 0.005; // Reduced (was 0.02) to allow soft-body deformation/wobble

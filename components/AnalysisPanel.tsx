@@ -1,15 +1,13 @@
-
 import React from 'react';
 import { AnalysisResult } from '../types';
-import { X, Zap, ArrowRight } from 'lucide-react';
+import { X } from 'lucide-react';
 
 interface AnalysisPanelProps {
   result: AnalysisResult | null;
   onClose: () => void;
-  onApplyUpgrade: () => void;
 }
 
-export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ result, onClose, onApplyUpgrade }) => {
+export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ result, onClose }) => {
   if (!result) return null;
 
   return (
@@ -37,21 +35,6 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ result, onClose, o
           <p className="leading-relaxed text-neon-green/90 border-l-2 border-neon-green/30 pl-3">
             {result.suggestion}
           </p>
-          
-          {/* Autonomous Upgrade Button */}
-          <button 
-            onClick={onApplyUpgrade}
-            className="mt-3 w-full group relative overflow-hidden bg-neon-green/10 hover:bg-neon-green/20 border border-neon-green/50 text-neon-green text-xs font-bold py-3 px-4 rounded transition-all flex items-center justify-between"
-          >
-             <div className="flex items-center gap-2">
-                <Zap size={14} className="fill-current" />
-                <span>APPLY CRISPR UPGRADE</span>
-             </div>
-             <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />
-             
-             {/* Scanline effect */}
-             <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:animate-[shimmer_1.5s_infinite]"></div>
-          </button>
         </div>
 
         <div>

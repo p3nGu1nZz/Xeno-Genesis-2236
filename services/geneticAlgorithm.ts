@@ -1,42 +1,59 @@
-
 import { Genome, CellType } from '../types';
 import { GRID_SIZE } from '../constants';
 
 const MUTATION_RATE = 0.2; 
 
+// "Nervous Ring" Topology Definition
+// Central 2x2 Core: NEURON
+// Surrounding Ring: Alternating HEART / SKIN
+const PLATONIC_IDEAL_MAP: Record<string, CellType> = {};
+
+// Initialize the ideal map
+for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+        const key = `${x},${y}`;
+        // Center 2x2 (Indices 2,3 for GRID_SIZE 6)
+        if (x >= 2 && x <= 3 && y >= 2 && y <= 3) {
+            PLATONIC_IDEAL_MAP[key] = CellType.NEURON;
+        }
+        // Ring 1 (Indices 1 to 4)
+        else if (x >= 1 && x <= 4 && y >= 1 && y <= 4) {
+            // Alternating pattern for the ring
+            if ((x + y) % 2 === 0) {
+                PLATONIC_IDEAL_MAP[key] = CellType.HEART;
+            } else {
+                PLATONIC_IDEAL_MAP[key] = CellType.SKIN;
+            }
+        } 
+        // Outer shell
+        else {
+            PLATONIC_IDEAL_MAP[key] = CellType.EMPTY;
+        }
+    }
+}
+
 export function createRandomGenome(generation: number = 0, targetHue?: number): Genome {
+  // 20% Chance to spawn a "Prophet" bot that adheres to the Nervous Ring topology
+  // This helps seed the population with the desired trait if extinction occurs.
+  if (Math.random() < 0.2) {
+      return createNervousRingGenome(generation, targetHue);
+  }
+
   const genes: CellType[][] = [];
-  
-  // Organic/Fuzzy Generation Logic (Probabilistic)
-  // Instead of forced rows, we use probabilities to create a random distribution
   for (let y = 0; y < GRID_SIZE; y++) {
     const row: CellType[] = [];
     for (let x = 0; x < GRID_SIZE; x++) {
-       const rand = Math.random();
-       
-       // Probability Distribution:
-       // 15% Empty (Gaps for shape variation)
-       // 55% Skin (Structural)
-       // 20% Heart (Muscle/Motor) - Scattered
-       // 10% Neuron (Sensory) - Scattered
-       
-       if (rand < 0.15) {
-           row.push(CellType.EMPTY);
-       } else if (rand < 0.70) {
-           row.push(CellType.SKIN);
-       } else if (rand < 0.90) {
-           row.push(CellType.HEART);
-       } else {
-           row.push(CellType.NEURON);
-       }
+      const rand = Math.random();
+      if (rand < 0.5) row.push(CellType.EMPTY);
+      else if (rand < 0.7) row.push(CellType.SKIN);
+      else if (rand < 0.9) row.push(CellType.HEART);
+      else row.push(CellType.NEURON); 
     }
     genes.push(row);
   }
-
-  // Ensure at least some structure exists (not all empty)
-  // We can inject a small core of skin to ensure viability
-  const mid = Math.floor(GRID_SIZE/2);
-  if (genes[mid][mid] === CellType.EMPTY) genes[mid][mid] = CellType.SKIN;
+  
+  // Ensure center has some structure so it's not empty
+  genes[Math.floor(GRID_SIZE/2)][Math.floor(GRID_SIZE/2)] = CellType.SKIN;
 
   let h: number;
   if (targetHue !== undefined) {
@@ -55,8 +72,37 @@ export function createRandomGenome(generation: number = 0, targetHue?: number): 
     fitness: 0,
     generation,
     color,
-    bioelectricMemory: Math.random() // High variability in plasticity
+    bioelectricMemory: Math.random()
   };
+}
+
+function createNervousRingGenome(generation: number, targetHue?: number): Genome {
+    const genes: CellType[][] = [];
+    for (let y = 0; y < GRID_SIZE; y++) {
+        const row: CellType[] = [];
+        for (let x = 0; x < GRID_SIZE; x++) {
+            row.push(PLATONIC_IDEAL_MAP[`${x},${y}`] || CellType.EMPTY);
+        }
+        genes.push(row);
+    }
+
+    let h: number;
+    if (targetHue !== undefined) {
+        h = (targetHue + (Math.random() * 20 - 10)) % 360;
+    } else {
+        h = Math.random() * 360;
+    }
+    if (h < 0) h += 360;
+
+    return {
+        id: "PLATONIC-" + Math.random().toString(36).substr(2, 6),
+        gridSize: GRID_SIZE,
+        genes,
+        fitness: 0,
+        generation,
+        color: `hsl(${h.toFixed(0)}, 80%, 50%)`, // Slightly brighter to indicate special status
+        bioelectricMemory: 0.8 // High plasticity to adapt quickly
+    };
 }
 
 function crossover(parentA: Genome, parentB: Genome, generation: number): Genome {
@@ -101,20 +147,43 @@ function mutate(genome: Genome): Genome {
   const newGenes = genome.genes.map(row => [...row]);
   let mutated = false;
   
-  // Mutation Logic
+  // 1. Structural Growth / Decay
+  if (Math.random() < 0.3) {
+    for (let y = 1; y < genome.gridSize - 1; y++) {
+      for (let x = 1; x < genome.gridSize - 1; x++) {
+        if (newGenes[y][x] === CellType.EMPTY && Math.random() < 0.1) {
+            const neighbors = [newGenes[y+1][x], newGenes[y-1][x], newGenes[y][x+1], newGenes[y][x-1]];
+            if (neighbors.some(n => n !== CellType.EMPTY)) {
+                newGenes[y][x] = Math.random() > 0.5 ? CellType.SKIN : CellType.NEURON;
+                mutated = true;
+            }
+        }
+      }
+    }
+  }
+
+  // 2. Platonic Pull (The bias towards Nervous Ring)
+  // Small chance for any cell to spontaneously align with the Platonic Ideal
+  if (Math.random() < 0.4) { // 40% chance that a mutation event includes a platonic shift
+      const x = Math.floor(Math.random() * genome.gridSize);
+      const y = Math.floor(Math.random() * genome.gridSize);
+      const idealType = PLATONIC_IDEAL_MAP[`${x},${y}`];
+      
+      if (idealType !== undefined && newGenes[y][x] !== idealType) {
+          // 10% chance to flip to ideal if selected
+          if (Math.random() < 0.1) {
+              newGenes[y][x] = idealType;
+              mutated = true;
+          }
+      }
+  }
+
+  // 3. Random Noise Mutation
   for (let y = 0; y < genome.gridSize; y++) {
     for (let x = 0; x < genome.gridSize; x++) {
-      if (Math.random() < 0.05) { // 5% chance per cell
+      if (Math.random() < 0.05) {
         const types = [CellType.EMPTY, CellType.SKIN, CellType.HEART, CellType.NEURON];
-        // Weighted random for mutation
-        const r = Math.random();
-        let type = CellType.SKIN;
-        if (r < 0.1) type = CellType.EMPTY;
-        else if (r < 0.6) type = CellType.SKIN;
-        else if (r < 0.85) type = CellType.HEART;
-        else type = CellType.NEURON;
-
-        newGenes[y][x] = type;
+        newGenes[y][x] = types[Math.floor(Math.random() * types.length)];
         mutated = true;
       }
     }
@@ -162,6 +231,7 @@ export function evolvePopulation(population: Genome[], generation: number, maxPo
       
       const sorted = [...pool].sort((a, b) => b.fitness - a.fitness);
       
+      // Variable growth
       const growthMultiplier = 1.0 + Math.random() * 0.8;
       const rngBonus = Math.floor(Math.random() * 4);
       

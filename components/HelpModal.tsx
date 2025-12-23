@@ -1,14 +1,12 @@
-
 import React from 'react';
 import { X, Play, MousePointer2, Zap, Activity } from 'lucide-react';
 
 interface HelpModalProps {
   open: boolean;
   onClose: () => void;
-  onStart: () => void;
 }
 
-export const HelpModal: React.FC<HelpModalProps> = ({ open, onClose, onStart }) => {
+export const HelpModal: React.FC<HelpModalProps> = ({ open, onClose }) => {
   if (!open) return null;
 
   return (
@@ -82,7 +80,7 @@ export const HelpModal: React.FC<HelpModalProps> = ({ open, onClose, onStart }) 
 
         <div className="p-8 pt-4 border-t border-slate-800 bg-slate-950/50">
             <button 
-                onClick={onStart}
+                onClick={onClose}
                 className="w-full bg-neon-cyan/10 hover:bg-neon-cyan/20 text-neon-cyan border border-neon-cyan font-bold font-display py-4 rounded transition-all flex items-center justify-center gap-2 group"
             >
                 <Play size={18} className="group-hover:fill-current" />

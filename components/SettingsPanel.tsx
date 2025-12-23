@@ -1,14 +1,12 @@
-
 import React, { useState, useRef } from 'react';
 import { SimulationConfig, SaveData, Genome } from '../types';
-import { Save, Upload, RefreshCw, X, Sliders, LogOut } from 'lucide-react';
+import { Save, Upload, RefreshCw, X, Sliders } from 'lucide-react';
 
 interface SettingsPanelProps {
   config: SimulationConfig;
   onSave: (newConfig: SimulationConfig) => void;
   onLoad: (data: SaveData) => void;
   onClose: () => void;
-  onQuit: () => void; // New prop
   population: Genome[];
   generation: number;
 }
@@ -18,7 +16,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onSave, 
   onLoad, 
   onClose,
-  onQuit,
   population,
   generation
 }) => {
@@ -215,19 +212,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     accept=".json"
                 />
              </div>
-           </div>
-
-           <hr className="border-red-900/30" />
-           
-           {/* Section: Danger Zone */}
-           <div className="space-y-3">
-             <label className="text-xs uppercase text-red-500 font-bold tracking-wider">Session Control</label>
-             <button 
-                onClick={onQuit}
-                className="w-full flex items-center justify-center gap-2 bg-red-950/40 hover:bg-red-900/60 text-red-400 py-3 rounded border border-red-900/50 transition-colors font-bold"
-             >
-                 <LogOut size={16} /> TERMINATE SIMULATION
-             </button>
            </div>
 
         </div>

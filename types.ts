@@ -25,6 +25,7 @@ export interface Particle {
   force: Point;
   charge: number; 
   isFixed?: boolean;
+  phase: number; // Topological phase for metachronal rhythm
 }
 
 export interface Spring {

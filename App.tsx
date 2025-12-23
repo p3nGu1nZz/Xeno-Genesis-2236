@@ -8,8 +8,8 @@ import { GenomeVisualizer } from './components/GenomeVisualizer';
 import { TitleScreen } from './components/TitleScreen';
 import { SettingsPanel } from './components/SettingsPanel';
 import { HelpModal } from './components/HelpModal';
-import { Xenobot, Genome, AnalysisResult, CameraState, SimulationConfig, SaveData, CellType } from './types';
-import { DEFAULT_CONFIG, INITIAL_POPULATION_SIZE, EVOLUTION_INTERVAL, WORLD_WIDTH } from './constants';
+import { Xenobot, Genome, AnalysisResult, CameraState, SimulationConfig, SaveData } from './types';
+import { DEFAULT_CONFIG, INITIAL_POPULATION_SIZE, EVOLUTION_INTERVAL } from './constants';
 import { ScanEye, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { PhysicsEngine } from './services/physicsEngine';
 import { createRandomGenome, evolvePopulation } from './services/geneticAlgorithm';
@@ -21,15 +21,11 @@ const App: React.FC = () => {
   const [showHelp, setShowHelp] = useState(false);
   const [config, setConfig] = useState<SimulationConfig>(DEFAULT_CONFIG);
   const [isSidebarCollapsed, setSidebarCollapsed] = useState(false);
-  
-  // UI State for Panels (Default Minimized)
-  const [minimizedPanels, setMinimizedPanels] = useState({ A: true, B: true });
 
   // Simulation State
   const [generation, setGeneration] = useState(1);
   const [isRunning, setIsRunning] = useState(false);
   const [acousticActive, setAcousticActive] = useState(false);
-  const [globalTick, setGlobalTick] = useState(0);
   
   // Simulation Engine State (Main Thread)
   const engineRef = useRef<PhysicsEngine | null>(null);
@@ -44,143 +40,21 @@ const App: React.FC = () => {
   const [bestGenomeA, setBestGenomeA] = useState<Genome | null>(null);
   const [bestGenomeB, setBestGenomeB] = useState<Genome | null>(null);
   
-  // Camera State (LookAt logic: x,y is center of screen in world space)
-  const [camera, setCamera] = useState<CameraState>({ x: WORLD_WIDTH / 2, y: 800, zoom: 0.55 });
+  // Camera State
+  const [camera, setCamera] = useState<CameraState>({ x: 0, y: 0, zoom: 0.55 });
   const keysPressed = useRef<Set<string>>(new Set());
   const lastInputTimeRef = useRef<number>(Date.now());
   const isAutoCameraRef = useRef<boolean>(true);
   
-  // Mouse Drag State
-  const isDraggingRef = useRef(false);
-  const dragStartRef = useRef({ x: 0, y: 0, camX: 0, camY: 0 });
-
   // Analysis State
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
-
-  // Audio Context Ref & Nodes
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const droneNodesRef = useRef<{
-      oscillators: OscillatorNode[],
-      gain: GainNode,
-      filter: BiquadFilterNode,
-      shimmerGain: GainNode
-  } | null>(null);
 
   // Refs for loop
   const requestRef = useRef<number>(0);
   
   // Use window dimensions for full screen canvas
   const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
-
-  // --- AUDIO FX SYSTEM (Ambient Drone) ---
-  useEffect(() => {
-    return () => {
-        if (audioContextRef.current) {
-            audioContextRef.current.close();
-        }
-    };
-  }, []);
-
-  const updateAudio = useCallback((isActive: boolean) => {
-      if (!audioContextRef.current) {
-          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-          const ctx = audioContextRef.current;
-
-          // Master Chain: Limiter/Compressor to glue sounds
-          const masterGain = ctx.createGain();
-          masterGain.gain.value = 0.0; 
-          
-          const compressor = ctx.createDynamicsCompressor();
-          compressor.threshold.value = -30;
-          compressor.ratio.value = 12;
-          compressor.attack.value = 0.05;
-          compressor.release.value = 0.2;
-
-          masterGain.connect(compressor);
-          compressor.connect(ctx.destination);
-
-          // 1. Deep Sub-Bass Drone (Binaural)
-          const oscBass1 = ctx.createOscillator();
-          oscBass1.type = 'sine';
-          oscBass1.frequency.value = 55; 
-          const gBass1 = ctx.createGain();
-          gBass1.gain.value = 0.4;
-          oscBass1.connect(gBass1);
-          gBass1.connect(masterGain);
-          oscBass1.start();
-
-          const oscBass2 = ctx.createOscillator();
-          oscBass2.type = 'sine';
-          oscBass2.frequency.value = 55.2; 
-          const gBass2 = ctx.createGain();
-          gBass2.gain.value = 0.3;
-          oscBass2.connect(gBass2);
-          gBass2.connect(masterGain);
-          oscBass2.start();
-
-          // 2. Atmospheric Pad (Filtered)
-          const oscPad = ctx.createOscillator();
-          oscPad.type = 'triangle';
-          oscPad.frequency.value = 110; 
-          
-          const filterPad = ctx.createBiquadFilter();
-          filterPad.type = 'lowpass';
-          filterPad.frequency.value = 150; 
-          filterPad.Q.value = 0.5;
-
-          const lfo = ctx.createOscillator();
-          lfo.type = 'sine';
-          lfo.frequency.value = 0.08; 
-          const lfoGain = ctx.createGain();
-          lfoGain.gain.value = 30; 
-          lfo.connect(lfoGain);
-          lfoGain.connect(filterPad.frequency);
-          lfo.start();
-
-          const gPad = ctx.createGain();
-          gPad.gain.value = 0.15;
-          
-          oscPad.connect(filterPad);
-          filterPad.connect(gPad);
-          gPad.connect(masterGain);
-          oscPad.start();
-
-          // 3. High Harmonic "Shimmer"
-          const oscShimmer = ctx.createOscillator();
-          oscShimmer.type = 'sine';
-          oscShimmer.frequency.value = 329.63; 
-          const gShimmer = ctx.createGain();
-          gShimmer.gain.value = 0.0; 
-          oscShimmer.connect(gShimmer);
-          gShimmer.connect(masterGain);
-          oscShimmer.start();
-          
-          droneNodesRef.current = { 
-              oscillators: [oscBass1, oscBass2, oscPad, oscShimmer, lfo], 
-              gain: masterGain, 
-              filter: filterPad,
-              shimmerGain: gShimmer
-          };
-      }
-
-      const nodes = droneNodesRef.current;
-      const ctx = audioContextRef.current;
-
-      if (ctx && nodes) {
-          const now = ctx.currentTime;
-          
-          if (isActive) {
-              nodes.gain.gain.setTargetAtTime(0.35, now, 1.0);
-              nodes.filter.frequency.setTargetAtTime(500, now, 1.5); 
-              nodes.shimmerGain.gain.setTargetAtTime(0.1, now, 2.0); 
-          } else {
-              nodes.gain.gain.setTargetAtTime(0.2, now, 3.0);
-              nodes.filter.frequency.setTargetAtTime(150, now, 3.0); 
-              nodes.shimmerGain.gain.setTargetAtTime(0.0, now, 1.0); 
-          }
-      }
-  }, []);
 
   // --- Simulation Logic (Main Thread) ---
 
@@ -196,7 +70,10 @@ const App: React.FC = () => {
         const sizeA = Math.floor(totalSize / 2);
         const sizeB = totalSize - sizeA;
         
+        // Group A: "Natives" (Cyan/Blue range ~190)
         const groupA = Array(sizeA).fill(null).map(() => createRandomGenome(currentGen, 190)); 
+        
+        // Group B: "Invaders" (Magenta/Red range ~340)
         const groupB = Array(sizeB).fill(null).map(() => createRandomGenome(currentGen, 340)); 
         
         pop = [...groupA, ...groupB];
@@ -205,561 +82,317 @@ const App: React.FC = () => {
     populationRef.current = pop;
     setGeneration(currentGen);
 
-    const placedBots: {x: number, y: number, r: number}[] = [];
-    
-    // Create Bots with Collision-Free Distribution
-    engine.bots = pop.map((g) => {
+    // Create Bots with Position Logic
+    engine.bots = pop.map((g, i) => {
         let startX = 0;
-        let startY = 0;
-        const botRadius = 300; 
-        const CLOUD_RADIUS = 350; 
-        let validPosition = false;
-        let attempts = 0;
-
         if (typeof g.originX === 'number' && !isNaN(g.originX)) {
-             while (!validPosition && attempts < 20) {
-                 startX = g.originX + (Math.random() - 0.5) * 150;
-                 startY = 600 + (Math.random() - 0.5) * 200;
-                 
-                 const collision = placedBots.some(p => {
-                     const dx = p.x - startX;
-                     const dy = p.y - startY;
-                     return (dx*dx + dy*dy) < (botRadius + p.r) ** 2;
-                 });
-                 
-                 if (!collision) validPosition = true;
-                 attempts++;
-             }
-        } 
-        else {
+             startX = g.originX + (Math.random() - 0.5) * 50; 
+        } else {
            const match = g.color.match(/hsl\((\d+\.?\d*)/);
            const hue = match ? parseFloat(match[1]) : 0;
            const isGroupA = (hue > 150 && hue < 230);
-           
-           const worldCenter = WORLD_WIDTH / 2;
-           const centerBase = isGroupA ? worldCenter - 300 : worldCenter + 300; 
-           
-           while (!validPosition && attempts < 50) {
-               const angle = Math.random() * Math.PI * 2;
-               const dist = Math.sqrt(Math.random()) * CLOUD_RADIUS;
-               
-               startX = centerBase + Math.cos(angle) * dist;
-               startY = 800 + Math.sin(angle) * (dist * 0.7); 
-
-               const collision = placedBots.some(p => {
-                   const dx = p.x - startX;
-                   const dy = p.y - startY;
-                   return (dx*dx + dy*dy) < (botRadius + p.r) ** 2;
-               });
-               
-               if (!collision) validPosition = true;
-               attempts++;
-           }
+           // Group A starts at 0, Group B starts further out
+           startX = isGroupA ? 0 : 1200; 
+           startX += (Math.random() - 0.5) * 150; 
+           g.originX = startX;
         }
-        
-        if (!validPosition) {
-            startX += (Math.random() - 0.5) * 500;
-            startY += (Math.random() - 0.5) * 500;
-        }
-
-        placedBots.push({x: startX, y: startY, r: botRadius});
-        g.originX = startX;
-
-        return engine.createBot(g, startX, startY);
+        return engine.createBot(g, startX, 200 + Math.random() * 100);
     });
-    
+
     engineRef.current = engine;
     botsRef.current = engine.bots;
-    
-    evolutionTimerRef.current = 0;
-    totalTickRef.current = 0;
-    setBestGenomeA(null);
-    setBestGenomeB(null);
   }, []);
 
-  const evolveContinuous = useCallback(() => {
-    if (!engineRef.current) return;
+  const evolveContinuous = () => {
+      const engine = engineRef.current;
+      if (!engine) return;
+      
+      const groups = [0, 1];
+      let evolutionOccurred = false;
+  
+      groups.forEach(groupId => {
+          const groupBots = engine.bots.filter(b => b.groupId === groupId);
+          const targetGroupSize = Math.floor(engine.config.populationSize / 2);
+          
+          if (groupBots.length === 0) {
+              const newG = createRandomGenome(generation, groupId === 0 ? 190 : 340);
+              const parentPos = groupId === 0 ? 0 : 1200;
+              const bot = engine.createBot(newG, parentPos, 200);
+              engine.addBot(bot);
+              return;
+          }
+  
+          // Probabilistic Reproduction Check
+          if (Math.random() > 0.005) return;
+  
+          groupBots.sort((a, b) => b.centerOfMass.x - a.centerOfMass.x);
+          
+          if (groupBots.length >= targetGroupSize) {
+               const victim = groupBots[groupBots.length - 1];
+               engine.removeBot(victim.id);
+          }
+  
+          const parent1 = groupBots[0];
+          const parent2 = groupBots.length > 1 ? groupBots[1] : groupBots[0];
+          
+          const parents = [parent1.genome, parent2.genome];
+          const nextGenParams = evolvePopulation(parents, generation, 10);
+          const childGenome = nextGenParams[nextGenParams.length - 1];
+          
+          const spawnX = parent1.centerOfMass.x - 50 - Math.random() * 50; 
+          const spawnY = parent1.centerOfMass.y + (Math.random() - 0.5) * 50;
+          
+          childGenome.originX = spawnX; 
+  
+          const childBot = engine.createBot(childGenome, spawnX, spawnY);
+          engine.addBot(childBot);
+          
+          evolutionOccurred = true;
+      });
+  
+      if (evolutionOccurred) {
+          setGeneration(g => g + 1);
+          populationRef.current = engine.bots.map(b => b.genome);
+      }
+  };
+
+  const updateBestGenomes = () => {
     const engine = engineRef.current;
-    
-    const groups = [0, 1];
-    let evolutionOccurred = false;
+    if (!engine) return;
 
-    groups.forEach(groupId => {
-        const groupBots = engine.bots.filter(b => b.groupId === groupId);
-        const targetGroupSize = Math.floor(config.populationSize / 2);
-        
-        if (groupBots.length === 0) {
-            const newG = createRandomGenome(generation, groupId === 0 ? 190 : 340);
-            const parentPos = groupId === 0 ? WORLD_WIDTH/2 - 400 : WORLD_WIDTH/2 + 400;
-            const bot = engine.createBot(newG, parentPos, 800);
-            engine.addBot(bot);
-            return;
-        }
-
-        if (Math.random() > 0.001) return;
-
-        groupBots.sort((a, b) => b.centerOfMass.x - a.centerOfMass.x);
-        
-        const needGrowth = groupBots.length < targetGroupSize;
-        
-        if (!needGrowth) {
-             const victim = groupBots[groupBots.length - 1];
-             engine.removeBot(victim.id);
-        }
-
-        const parent = groupBots[0]; 
-        
-        const childGenome: Genome = {
-            ...parent.genome,
-            genes: parent.genome.genes.map(row => [...row]), 
-            id: Math.random().toString(36).substr(2, 9),
-            generation: generation + 1,
-            bioelectricMemory: parent.genome.bioelectricMemory,
-            originX: parent.genome.originX
-        };
-        
-        const spawnX = parent.centerOfMass.x + (Math.random() - 0.5) * 80; 
-        const spawnY = parent.centerOfMass.y + (Math.random() - 0.5) * 80;
-        
-        const childBot = engine.createBot(childGenome, spawnX, spawnY);
-        engine.addBot(childBot);
-        
-        evolutionOccurred = true;
-    });
-
-    if (evolutionOccurred) {
-        setGeneration(g => g + 1);
-        populationRef.current = engine.bots.map(b => b.genome);
+    // Best A
+    const botsA = engine.bots.filter(b => b.groupId === 0);
+    if (botsA.length > 0) {
+        const bestA = botsA.reduce((prev, curr) => (curr.centerOfMass.x > prev.centerOfMass.x ? curr : prev));
+        setBestGenomeA(bestA.genome);
     }
 
-  }, [config.populationSize, generation]);
-
-  const updateSimulation = useCallback(() => {
-      if (!engineRef.current) return;
-      
-      engineRef.current.update(performance.now() / 1000);
-      botsRef.current = engineRef.current.bots;
-
-      evolutionTimerRef.current += 1;
-      totalTickRef.current += 1;
-      
-      if (totalTickRef.current % 5 === 0) {
-          setGlobalTick(totalTickRef.current);
-      }
-
-      if (evolutionTimerRef.current >= EVOLUTION_INTERVAL) {
-          evolveContinuous();
-          evolutionTimerRef.current = 0;
-      }
-
-      if (evolutionTimerRef.current % 10 === 0) { 
-        let bestA: Genome | null = null;
-        let maxFitA = -Infinity;
-        let bestB: Genome | null = null;
-        let maxFitB = -Infinity;
-
-        engineRef.current.bots.forEach(b => {
-             const x = b.centerOfMass.x;
-             const isCyan = b.groupId === 0;
-
-             if (isCyan) {
-                 if (x > maxFitA) { maxFitA = x; bestA = b.genome; }
-             } else {
-                 if (x > maxFitB) { maxFitB = x; bestB = b.genome; }
-             }
-        });
-        
-        if (bestA) setBestGenomeA({...bestA, fitness: maxFitA});
-        if (bestB) setBestGenomeB({...bestB, fitness: maxFitB});
-      }
-  }, [evolveContinuous]);
-
-  const getPopulationFromBots = (): Genome[] => {
-      return populationRef.current;
+    // Best B
+    const botsB = engine.bots.filter(b => b.groupId === 1);
+    if (botsB.length > 0) {
+        const bestB = botsB.reduce((prev, curr) => (curr.centerOfMass.x > prev.centerOfMass.x ? curr : prev));
+        setBestGenomeB(bestB.genome);
+    }
   };
 
-  const getCenteredCamera = (width: number, height: number, zoom: number = 0.55) => {
-    // Center on world middle
-    return {
-        x: WORLD_WIDTH / 2,
-        y: 800,
-        zoom
-    };
-  };
+  const simulationLoop = (time: number) => {
+      const engine = engineRef.current;
+      if (!engine) return;
 
-  // --- Initialization Logic ---
+      if (isRunning) {
+          engine.update(time / 1000); // Physics Update
+          // IMPORTANT: Sync the Ref with the latest array from engine
+          // Because engine methods like removeBot might replace the array reference
+          botsRef.current = engine.bots; 
+
+          totalTickRef.current += 1;
+          evolutionTimerRef.current += 1;
+
+          if (evolutionTimerRef.current >= EVOLUTION_INTERVAL) {
+             evolveContinuous();
+             evolutionTimerRef.current = 0;
+          }
+
+          if (totalTickRef.current % 30 === 0) {
+             updateBestGenomes();
+          }
+      }
+
+      // Camera Handling
+      const now = Date.now();
+      
+      // Auto-re-enable auto-camera after 3 seconds of manual inactivity
+      if (!isAutoCameraRef.current && now - lastInputTimeRef.current > 3000) {
+          isAutoCameraRef.current = true;
+      }
+
+      // Manual Control
+      if (keysPressed.current.size > 0) {
+          isAutoCameraRef.current = false;
+          lastInputTimeRef.current = now;
+          
+          let dx = 0, dy = 0;
+          const speed = 15 / camera.zoom;
+          
+          if (keysPressed.current.has('a') || keysPressed.current.has('arrowleft')) dx -= speed; // Move camera left
+          if (keysPressed.current.has('d') || keysPressed.current.has('arrowright')) dx += speed; // Move camera right
+          if (keysPressed.current.has('w') || keysPressed.current.has('arrowup')) dy -= speed; // Move camera up
+          if (keysPressed.current.has('s') || keysPressed.current.has('arrowdown')) dy += speed; // Move camera down
+          
+          if (dx !== 0 || dy !== 0) {
+              setCamera(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
+          }
+      } 
+      // Auto Follow Logic (Group A - Natives)
+      else if (isAutoCameraRef.current && isRunning) {
+          const groupA = engine.bots.filter(b => b.groupId === 0 && !b.isDead);
+          
+          if (groupA.length > 0) {
+              let avgX = 0, avgY = 0;
+              let count = 0;
+              // Only follow top 50% performers to keep camera moving forward
+              const sorted = [...groupA].sort((a,b) => b.centerOfMass.x - a.centerOfMass.x);
+              const topHalf = sorted.slice(0, Math.max(1, Math.ceil(sorted.length / 2)));
+
+              topHalf.forEach(b => { 
+                  avgX += b.centerOfMass.x; 
+                  avgY += b.centerOfMass.y; 
+                  count++;
+              });
+              
+              if (count > 0) {
+                  avgX /= count;
+                  avgY /= count;
+
+                  // Target: Keep swarm center at left 40% of screen to show path ahead
+                  // ScreenX = (WorldX - CamX) * Zoom + Width/2
+                  // We want ScreenX = 0.4 * Width (left side)
+                  // 0.4*W - 0.5*W = (AvgX - CamX) * Zoom
+                  // -0.1*W / Zoom = AvgX - CamX
+                  // CamX = AvgX + (0.1*W) / Zoom
+                  
+                  const targetCamX = avgX + (dimensions.width * 0.10 / camera.zoom); 
+                  const targetCamY = avgY;
+
+                  // Fine-tuned lerp for smoother follow and reactivation (0.05)
+                  const lerp = 0.05; 
+                  setCamera(prev => ({
+                      ...prev,
+                      x: prev.x + (targetCamX - prev.x) * lerp,
+                      y: prev.y + (targetCamY - prev.y) * lerp,
+                  }));
+              }
+          }
+      }
+
+      requestRef.current = requestAnimationFrame(simulationLoop);
+  };
 
   useEffect(() => {
-    const handleResize = () => {
-      setDimensions({
-        width: window.innerWidth,
-        height: window.innerHeight
-      });
-    };
+    requestRef.current = requestAnimationFrame(simulationLoop);
+    return () => cancelAnimationFrame(requestRef.current);
+  }, [isRunning, camera, dimensions]);
+
+  // Window Resize
+  useEffect(() => {
+    const handleResize = () => setDimensions({ width: window.innerWidth, height: window.innerHeight });
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Keyboard Handling
+  // Keyboard Input
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-        keysPressed.current.add(e.key.toLowerCase());
-        lastInputTimeRef.current = Date.now();
-        isAutoCameraRef.current = false;
-    };
-    const handleKeyUp = (e: KeyboardEvent) => {
-        keysPressed.current.delete(e.key.toLowerCase());
-        lastInputTimeRef.current = Date.now();
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-    return () => {
-        window.removeEventListener('keydown', handleKeyDown);
-        window.removeEventListener('keyup', handleKeyUp);
-    };
+      const handleKeyDown = (e: KeyboardEvent) => {
+          keysPressed.current.add(e.key.toLowerCase());
+          if (e.key === 'q' || e.key === '-') setCamera(c => ({...c, zoom: Math.max(0.1, c.zoom * 0.95)}));
+          if (e.key === 'e' || e.key === '=') setCamera(c => ({...c, zoom: Math.min(2.0, c.zoom * 1.05)}));
+      };
+      const handleKeyUp = (e: KeyboardEvent) => {
+          keysPressed.current.delete(e.key.toLowerCase());
+      };
+      window.addEventListener('keydown', handleKeyDown);
+      window.addEventListener('keyup', handleKeyUp);
+      return () => {
+          window.removeEventListener('keydown', handleKeyDown);
+          window.removeEventListener('keyup', handleKeyUp);
+      };
   }, []);
 
-  // Mouse Drag Camera Handling
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (e.button === 0) { // Left Click only
-        isDraggingRef.current = true;
-        isAutoCameraRef.current = false;
-        dragStartRef.current = {
-            x: e.clientX,
-            y: e.clientY,
-            camX: camera.x,
-            camY: camera.y
-        };
+  const handleStart = () => {
+    if (appState === 'TITLE') {
+        initSimulation(config);
+        setAppState('SIMULATION');
+        setIsRunning(true);
+    } else {
+        setIsRunning(!isRunning);
     }
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (isDraggingRef.current) {
-        // Standard drag logic for LookAt camera
-        const dx = (e.clientX - dragStartRef.current.x) / camera.zoom;
-        const dy = (e.clientY - dragStartRef.current.y) / camera.zoom;
-        setCamera(prev => ({
-            ...prev,
-            x: dragStartRef.current.camX - dx, // Invert drag for natural feel
-            y: dragStartRef.current.camY - dy
-        }));
-    }
-  };
-
-  const handleMouseUp = () => {
-      isDraggingRef.current = false;
-  };
-
-  const startNewSimulation = () => {
-    setAppState('SIMULATION');
-    initSimulation(config, [], 1);
-    setCamera(getCenteredCamera(window.innerWidth, window.innerHeight, 0.55));
-    
-    setShowHelp(true); 
-    setIsRunning(false); 
-    
-    if (audioContextRef.current?.state === 'suspended') {
-        audioContextRef.current.resume();
-    }
-    updateAudio(false); 
-  };
-
-  const handleStartSim = () => {
-      setIsRunning(true);
-      setShowHelp(false);
-  };
-
-  const handleApplySettings = (newConfig: SimulationConfig) => {
-    setConfig(newConfig);
-    initSimulation(newConfig, [], 1);
-    setShowSettings(false);
-    setIsRunning(true);
-  };
-
-  const handleLoadSave = (data: SaveData) => {
-    setConfig(data.config);
-    initSimulation(data.config, data.population, data.generation);
-    setShowSettings(false);
-    setIsRunning(false); 
-    alert(`Simulation loaded: Generation ${data.generation}`);
-  };
-
-  const handleQuit = () => {
-    setIsRunning(false);
-    setAppState('TITLE');
-    setShowSettings(false);
-    if (audioContextRef.current) {
-        audioContextRef.current.close();
-        audioContextRef.current = null;
-    }
-  };
-
-  const togglePlay = () => {
-      setIsRunning(!isRunning);
-  };
-
-  const handleMorphologyUpgrade = () => {
-    if (!populationRef.current || populationRef.current.length === 0) return;
-    
-    const improvedPopulation = populationRef.current.map(g => {
-        const newGenes = g.genes.map(row => [...row]);
-        const size = g.gridSize;
-
-        for (let y = 0; y < size; y++) {
-            for (let x = 0; x < size; x++) {
-                if (y === 0) {
-                    newGenes[y][x] = CellType.NEURON; 
-                } else if (y === size - 1) {
-                    newGenes[y][x] = CellType.HEART; 
-                } else {
-                    newGenes[y][x] = CellType.SKIN; 
-                }
-            }
-        }
-
-        return {
-            ...g,
-            genes: newGenes,
-            bioelectricMemory: 0.60,
-            generation: g.generation + 1
-        };
-    });
-
-    initSimulation(config, improvedPopulation, generation + 1);
-    setAnalysisResult(null); 
-  };
-
-  // --- Main Animation Loop ---
-
-  const updateCamera = () => {
-      const now = Date.now();
-      
-      // Auto-Resume Auto Camera after 2s of inactivity (Reduced from 10s)
-      if (!isDraggingRef.current && !isAutoCameraRef.current && (now - lastInputTimeRef.current > 2000)) {
-          isAutoCameraRef.current = true;
-      }
-
-      if (isAutoCameraRef.current && engineRef.current) {
-          // Follow Group A (Group 0)
-          let totalX = 0;
-          let totalY = 0;
-          let count = 0;
-          
-          const bots = engineRef.current.bots;
-          for (let i = 0; i < bots.length; i++) {
-              const b = bots[i];
-              if (b.groupId === 0 && !b.isDead) {
-                  totalX += b.centerOfMass.x;
-                  totalY += b.centerOfMass.y;
-                  count++;
-              }
-          }
-
-          if (count > 0) {
-              const avgX = totalX / count;
-              const avgY = totalY / count;
-              
-              // Target Screen Position: 40% Width (Left of Center)
-              // Standard LookAt Logic:
-              // ScreenX = (WorldX - CamX) * Zoom + W/2
-              // TargetScreenX = 0.4 * W
-              // 0.4 * W = (AvgX - CamX) * Zoom + 0.5 * W
-              // -0.1 * W = (AvgX - CamX) * Zoom
-              // -0.1 * W / Zoom = AvgX - CamX
-              // CamX = AvgX + 0.1 * W / Zoom
-              
-              const targetCamX = avgX + (0.1 * dimensions.width) / camera.zoom;
-              const targetCamY = avgY; 
-
-              const lerpFactor = 0.05;
-              
-              setCamera(prev => ({
-                  x: prev.x + (targetCamX - prev.x) * lerpFactor,
-                  y: prev.y + (targetCamY - prev.y) * lerpFactor, 
-                  zoom: prev.zoom
-              }));
-          }
-      } else {
-          // Manual Camera Logic (Keys)
-          setCamera(prev => {
-              if (isAutoCameraRef.current || isDraggingRef.current) return prev; 
-              
-              const speed = 25 / prev.zoom; // Increased speed for responsiveness
-              let dx = 0;
-              let dy = 0;
-              let dZoom = 0;
-
-              // WASD + Arrow Keys
-              if (keysPressed.current.has('w') || keysPressed.current.has('arrowup')) dy -= speed; // Up decreases Y in world
-              if (keysPressed.current.has('s') || keysPressed.current.has('arrowdown')) dy += speed;
-              if (keysPressed.current.has('a') || keysPressed.current.has('arrowleft')) dx -= speed; // Left decreases X
-              if (keysPressed.current.has('d') || keysPressed.current.has('arrowright')) dx += speed;
-              
-              // Q/E + -/= for Zoom
-              if (keysPressed.current.has('q') || keysPressed.current.has('-') || keysPressed.current.has('_')) dZoom -= 0.02;
-              if (keysPressed.current.has('e') || keysPressed.current.has('=') || keysPressed.current.has('+')) dZoom += 0.02;
-
-              if (dx === 0 && dy === 0 && dZoom === 0) return prev;
-
-              return {
-                   x: prev.x + dx,
-                   y: prev.y + dy,
-                   zoom: Math.max(0.1, Math.min(4.0, prev.zoom + dZoom))
-              };
-          });
-      }
-  };
-
-  const loop = useCallback(() => {
-    if (isRunning) {
-        updateSimulation();
-    }
-    updateCamera();
-    requestRef.current = requestAnimationFrame(loop);
-  }, [isRunning, updateSimulation]); 
-  
-  useEffect(() => {
-    requestRef.current = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(requestRef.current);
-  }, [loop]);
-
-  const resetCamera = () => {
-    setCamera(getCenteredCamera(window.innerWidth, window.innerHeight, 0.55));
-    isAutoCameraRef.current = false;
-    lastInputTimeRef.current = Date.now();
+  const handleAnalyze = async () => {
+     if (isAnalyzing || !bestGenomeA) return;
+     setIsAnalyzing(true);
+     
+     // Find the best bot object
+     const engine = engineRef.current;
+     if (engine) {
+         const bot = engine.bots.find(b => b.genome.id === bestGenomeA.id);
+         if (bot) {
+             const result = await analyzeXenobot(bot);
+             setAnalysisResult(result);
+         }
+     }
+     setIsAnalyzing(false);
   };
 
   return (
-    <div 
-        className="relative w-full h-full bg-slate-950 overflow-hidden font-sans select-none text-white"
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-    >
-      {appState === 'TITLE' && <TitleScreen onStart={startNewSimulation} />}
+    <>
+      {appState === 'TITLE' && <TitleScreen onStart={handleStart} />}
       
       {appState === 'SIMULATION' && (
-          <>
-             <SimulationCanvas 
-                 botsRef={botsRef}
-                 width={dimensions.width}
-                 height={dimensions.height}
-                 groundY={config.groundHeight}
-                 camera={camera}
-             />
-             
-             {/* Top Right HUD Area */}
-             <div className="absolute top-0 right-0 w-full p-4 pointer-events-none flex justify-end items-start z-20">
-                {/* Physics Stats */}
-                <div className={`absolute top-4 ${isSidebarCollapsed ? 'left-20' : 'left-80'} ml-6 transition-all duration-500 bg-slate-900/50 backdrop-blur border border-slate-700 p-2 rounded text-xs text-slate-400 select-none`}>
-                    <div>PHYSICS_ENGINE: MAIN_THREAD_OPTIMIZED</div>
-                    <div>GRAVITY: {config.gravity.toFixed(2)} m/s²</div>
-                    <div>POPULATION: {populationRef.current.length} / {config.maxPopulationSize}</div>
-                    <div>TICK: {globalTick}</div>
-                    <div className={acousticActive ? "text-neon-magenta animate-pulse" : "text-slate-500"}>
-                        STIMULUS: {acousticActive ? '300 Hz (LINEARIZING)' : 'NONE (ROTATIONAL)'}
-                    </div>
-                </div>
-
-                <div className="flex gap-2 pointer-events-auto mt-2 mr-2">
-                    <button 
-                        onClick={resetCamera}
-                        className="bg-slate-800 hover:bg-slate-700 text-neon-cyan border border-slate-600 px-3 py-1 rounded text-xs flex items-center gap-2 transition-colors shadow-lg select-none"
-                    >
-                        <ScanEye size={14} /> RESET CAM
-                    </button>
-                </div>
-            </div>
-
-            {/* Bottom Left Instructions */}
-            <div className={`absolute bottom-6 ${isSidebarCollapsed ? 'left-20' : 'left-80'} ml-6 pointer-events-none text-[10px] text-slate-500 font-mono z-20 transition-all duration-500 select-none`}>
-                <div>[DRAG / WASD / ARROWS] PAN CAMERA</div>
-                <div>[Q / E / - / =] ZOOM LEVEL</div>
-                <div className="text-neon-cyan mt-1">[MOUSE HOVER] INSPECT CELLULAR NODE</div>
-            </div>
-             
+        <div className="relative w-full h-full overflow-hidden bg-deep-space">
+          <SimulationCanvas 
+            botsRef={botsRef}
+            width={dimensions.width}
+            height={dimensions.height}
+            groundY={config.groundHeight}
+            camera={camera}
+          />
+          
+          <div className="absolute top-0 left-0 bottom-0 z-30">
              <Controls 
                 isRunning={isRunning}
                 generation={generation}
                 timeRemaining={0}
-                onTogglePlay={togglePlay}
-                onAnalyze={async () => {
-                     setIsAnalyzing(true);
-                     const target = bestGenomeA || (populationRef.current.length > 0 ? populationRef.current[0] : null);
-                     if (target) {
-                         const res = await analyzeXenobot(target, generation);
-                         setAnalysisResult(res);
-                     }
-                     setIsAnalyzing(false);
-                }}
-                onOpenSettings={() => setShowSettings(true)}
+                onTogglePlay={() => setIsRunning(!isRunning)}
+                onAnalyze={handleAnalyze}
+                onOpenSettings={() => { setShowSettings(true); setIsRunning(false); }}
                 isAnalyzing={isAnalyzing}
                 onToggleAcoustic={() => {
-                    const active = !acousticActive;
-                    setAcousticActive(active);
-                    if (engineRef.current) {
-                        engineRef.current.config.acousticFreq = active ? 300 : 0;
-                    }
-                    updateAudio(active);
+                    setAcousticActive(!acousticActive);
+                    setConfig(prev => ({...prev, acousticFreq: !acousticActive ? 300 : 0}));
+                    if (engineRef.current) engineRef.current.config.acousticFreq = !acousticActive ? 300 : 0;
                 }}
                 acousticActive={acousticActive}
                 isCollapsed={isSidebarCollapsed}
                 onToggleCollapse={() => setSidebarCollapsed(!isSidebarCollapsed)}
-                minimizedPanels={minimizedPanels}
-                onRestorePanel={(id) => setMinimizedPanels(prev => ({...prev, [id]: false}))}
-                genomeA={bestGenomeA}
-                genomeB={bestGenomeB}
              />
-
-             {bestGenomeA && (
-                 <GenomeVisualizer 
-                     genome={bestGenomeA}
-                     label="GROUP A (CYAN) // LEADER"
-                     borderColor="border-neon-cyan/50"
-                     initialPosition={{ x: 340, y: 20 }}
-                     hidden={minimizedPanels.A}
-                     onMinimize={() => setMinimizedPanels(prev => ({...prev, A: true}))}
-                 />
-             )}
-
-             {bestGenomeB && (
-                 <GenomeVisualizer 
-                     genome={bestGenomeB}
-                     label="GROUP B (MAGENTA) // LEADER"
-                     borderColor="border-neon-magenta/50"
-                     initialPosition={{ x: 340, y: 300 }}
-                     hidden={minimizedPanels.B}
-                     onMinimize={() => setMinimizedPanels(prev => ({...prev, B: true}))}
-                 />
-             )}
-
-             <AnalysisPanel 
-                 result={analysisResult} 
-                 onClose={() => setAnalysisResult(null)}
-                 onApplyUpgrade={handleMorphologyUpgrade} 
+          </div>
+          
+          <AnalysisPanel result={analysisResult} onClose={() => setAnalysisResult(null)} />
+          
+          {showSettings && (
+             <SettingsPanel 
+                config={config} 
+                onSave={(newCfg) => {
+                    setConfig(newCfg);
+                    initSimulation(newCfg, populationRef.current, generation);
+                    setShowSettings(false);
+                    setIsRunning(true);
+                }}
+                onLoad={(data) => {
+                    setConfig(data.config);
+                    initSimulation(data.config, data.population, data.generation);
+                    setShowSettings(false);
+                }}
+                onClose={() => setShowSettings(false)}
+                population={populationRef.current}
+                generation={generation}
              />
+          )}
 
-             <HelpModal 
-                 open={showHelp} 
-                 onClose={handleStartSim} 
-                 onStart={handleStartSim} 
-             />
+          <HelpModal open={showHelp} onClose={() => setShowHelp(false)} />
+          
+          <div className="absolute bottom-6 right-6 flex gap-4">
+              <button onClick={() => setShowHelp(true)} className="p-2 bg-slate-800 rounded-full text-slate-400 hover:text-white border border-slate-600">
+                  <ScanEye size={20} />
+              </button>
+          </div>
 
-             {showSettings && (
-                 <SettingsPanel 
-                     config={config}
-                     onSave={handleApplySettings}
-                     onLoad={handleLoadSave}
-                     onClose={() => setShowSettings(false)}
-                     onQuit={handleQuit}
-                     population={getPopulationFromBots()}
-                     generation={generation}
-                 />
-             )}
-          </>
+          <GenomeVisualizer genome={bestGenomeA} label="GROUP A (NATIVE)" borderColor="border-neon-cyan" initialPosition={{x: 350, y: 30}} hidden={isSidebarCollapsed} onMinimize={() => {}} />
+          <GenomeVisualizer genome={bestGenomeB} label="GROUP B (INVADER)" borderColor="border-neon-magenta" initialPosition={{x: 350, y: 300}} hidden={isSidebarCollapsed} onMinimize={() => {}} />
+        </div>
       )}
-    </div>
+    </>
   );
 };
 

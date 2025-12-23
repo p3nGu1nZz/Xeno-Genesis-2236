@@ -1,61 +1,44 @@
 
-import { GoogleGenAI } from "@google/genai";
-import { Genome, CellType, AnalysisResult } from '../types';
+import { GoogleGenAI, Type } from "@google/genai";
+import { Xenobot, AnalysisResult, CellType } from "../types";
 
-const apiKey = process.env.API_KEY || '';
-const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
+// Initialize Gemini with environment API key
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-export const analyzeXenobot = async (genome: Genome, generationCount: number): Promise<AnalysisResult> => {
-  if (!ai) {
-    return {
-      analysis: "API Key missing. Cannot access Galactic Research Database.",
-      suggestion: "Configure process.env.API_KEY.",
-      biologicalContext: "N/A"
-    };
-  }
+export async function analyzeXenobot(bot: Xenobot): Promise<AnalysisResult> {
+  const { genome, age, energy } = bot;
 
-  let gridStr = "";
-  let stats = { skin: 0, heart: 0, neuron: 0, empty: 0 };
-
-  for (const row of genome.genes) {
-    gridStr += row.map(cell => {
-      if (cell === CellType.SKIN) { stats.skin++; return 'S'; }
-      if (cell === CellType.HEART) { stats.heart++; return 'H'; }
-      if (cell === CellType.NEURON) { stats.neuron++; return 'N'; }
-      stats.empty++;
-      return '.';
-    }).join(' ') + "\n";
+  // Serialize the grid for the LLM
+  let gridVisualization = "";
+  for (let y = 0; y < genome.gridSize; y++) {
+    let row = "";
+    for (let x = 0; x < genome.gridSize; x++) {
+      const cell = genome.genes[y][x];
+      if (cell === CellType.EMPTY) row += ". ";
+      else if (cell === CellType.SKIN) row += "S "; // Skin (Passive)
+      else if (cell === CellType.HEART) row += "M "; // Muscle (Active)
+      else if (cell === CellType.NEURON) row += "N "; // Neuron (Signaling)
+    }
+    gridVisualization += row.trim() + "\n";
   }
 
   const prompt = `
-    You are Dr. Michael Levin's AI research partner in 2236.
-    Analyze this synthetic biological form (Xenobot) based on its morphological grid and fitness.
+    You are a xenobiologist analyzing a synthetic lifeform (Xenobot) in a physics simulation.
     
-    Data:
-    Generation: ${generationCount}
-    Fitness (Distance): ${genome.fitness.toFixed(2)}
-    Bioelectric Memory (Plasticity Factor): ${genome.bioelectricMemory?.toFixed(3) || '0.500'}
-    Composition: Skin=${stats.skin}, Heart=${stats.heart}, Neuron=${stats.neuron}
-    Grid Structure:
-    ${gridStr}
-
-    Context:
-    - This organism evolves via a Genetic Algorithm but also exhibits "Agential Material" properties.
-    - "Bioelectric Memory" (0.0-1.0) controls how fast the physical structure adapts to stress (plasticity).
-    - We are currently observing a need for "Bilateral Polarity".
-    - Anterior should contain Neurons (Sensory/Structural). Posterior should contain Heart cells (Propulsion).
-
-    Tasks:
-    1. Analyze the morphology. Is there a clear "Cognitive Light Cone" or are the parts acting as individual cells?
-    2. Suggest a "Target Morphology" that introduces Bilateral Polarity (Neurons leading, Heart trailing).
-    3. We need to 'canalize' the recent gains. Suggest reducing Bioelectric Memory to approx 0.60 to prevent over-remodeling.
-
-    Output (JSON):
-    {
-      "analysis": "...",
-      "suggestion": "...",
-      "biologicalContext": "..."
-    }
+    Structure Grid (S=Skin, M=Muscle, N=Neuron, .=Empty):
+    ${gridVisualization}
+    
+    Biology Stats:
+    - Age: ${age} ticks
+    - Energy Reserve: ${energy.toFixed(1)}
+    - Bioelectric Plasticity: ${genome.bioelectricMemory.toFixed(3)}
+    
+    Task:
+    1. Analyze its morphology (how its structure might affect movement).
+    2. Suggest an evolutionary mutation to improve locomotion efficiency.
+    3. Provide a creative scientific species name and brief biological context.
+    
+    Output strictly valid JSON.
   `;
 
   try {
@@ -63,24 +46,33 @@ export const analyzeXenobot = async (genome: Genome, generationCount: number): P
       model: 'gemini-3-flash-preview',
       contents: prompt,
       config: {
-        responseMimeType: 'application/json'
+        responseMimeType: 'application/json',
+        responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+                analysis: { type: Type.STRING },
+                suggestion: { type: Type.STRING },
+                biologicalContext: { type: Type.STRING },
+            }
+        }
       }
     });
 
-    const text = response.text || "{}";
-    const data = JSON.parse(text);
+    const result = response.text;
+    if (!result) return getFallbackAnalysis();
+    
+    return JSON.parse(result) as AnalysisResult;
 
-    return {
-      analysis: data.analysis || "Bioelectric pattern undefined.",
-      suggestion: data.suggestion || "Increase integration.",
-      biologicalContext: data.biologicalContext || "Morphogenetic field stable."
-    };
   } catch (error) {
-    console.error("Gemini Error:", error);
-    return {
-      analysis: "Bio-link severed.",
-      suggestion: "Re-establish uplink.",
-      biologicalContext: "Signal lost."
-    };
+    console.error("Gemini Analysis Error:", error);
+    return getFallbackAnalysis();
   }
-};
+}
+
+function getFallbackAnalysis(): AnalysisResult {
+  return {
+    analysis: "Neural link offline. Unable to process morphology.",
+    suggestion: "Check API configuration.",
+    biologicalContext: "Specimen #UNKNOWN"
+  };
+}

@@ -1,8 +1,10 @@
 
 import { Xenobot, Particle, Spring, Genome, CellType, SimulationConfig } from '../types';
-import { DEFAULT_CONFIG, TIMESTEP, CONSTRAINT_ITERATIONS, CILIA_FORCE, METABOLIC_DECAY, INITIAL_YOLK_ENERGY, SURFACE_TENSION, WORLD_WIDTH, EDGE_BUFFER, WORLD_HEIGHT_LIMIT } from '../constants';
+import { DEFAULT_CONFIG, TIMESTEP, CONSTRAINT_ITERATIONS, CILIA_FORCE, METABOLIC_DECAY, INITIAL_YOLK_ENERGY, SURFACE_TENSION } from '../constants';
 
 const uid = () => Math.random().toString(36).substr(2, 9);
+const MAX_FORCE = 10.0; // Prevent explosion
+const MAX_VELOCITY = 15.0; // Prevent infinite streaks
 
 export class PhysicsEngine {
   bots: Xenobot[] = [];
@@ -33,13 +35,8 @@ export class PhysicsEngine {
     for (let y = 0; y < gridSize; y++) {
       for (let x = 0; x < gridSize; x++) {
         if (genes[y][x] !== CellType.EMPTY) {
-          // Add significant randomization (Jitter) to initial particle position 
-          // to completely break the visual lattice and look more like organic tissue
-          const jitterX = (Math.random() - 0.5) * (scale * 0.5); 
-          const jitterY = (Math.random() - 0.5) * (scale * 0.5);
-
-          const px = startX + x * scale + jitterX;
-          const py = startY + y * scale + jitterY;
+          const px = startX + x * scale;
+          const py = startY + y * scale;
           particleMap[y][x] = particles.length;
           particles.push({
             pos: { x: px, y: py },
@@ -48,6 +45,7 @@ export class PhysicsEngine {
             mass: 1,
             force: { x: 0, y: 0 },
             charge: 0,
+            phase: x * 0.6 + y * 0.1 // Topological phase for synchronized waves
           });
         }
       }
@@ -78,15 +76,7 @@ export class PhysicsEngine {
                 
                 const isMuscle = (type1 === CellType.HEART || type2 === CellType.HEART);
                 const isNeuron = (type1 === CellType.NEURON || type2 === CellType.NEURON);
-                
-                // Reduced neuron stiffness slightly to prevent high-freq jitter
-                const stiffness = isNeuron ? 0.6 : 0.3;
-
-                // Propulsion Logic:
-                // We use a phase based on grid index to create a traveling wave.
-                // dx acts as a spatial index (anterior to posterior wave).
-                // This ensures neighbor synchronization naturally.
-                const phaseOffset = x * 0.5 + y * 0.1;
+                const stiffness = isNeuron ? 0.8 : 0.3;
 
                 springs.push({
                     p1: p1Idx,
@@ -95,7 +85,7 @@ export class PhysicsEngine {
                     currentRestLength: dist * scale,
                     stiffness,
                     isMuscle,
-                    phaseOffset
+                    phaseOffset: (x + y) * 0.5
                 });
                 }
             }
@@ -154,14 +144,15 @@ export class PhysicsEngine {
       this.updateBot(bot, time, dt, dtSq, fluidBaseFriction);
     }
     
-    // Apply smoothing at the end of the physics step to reduce jitter
+    // Apply smoothing at the end of the physics step
     this.smoothRenderPositions();
   }
   
   smoothRenderPositions() {
-    // Tuned Smoothing Factor (Linear Interpolation)
-    const smoothing = 0.25; 
-    const snapThreshold = 0.01; 
+    // Linear Interpolation (Lerp) factor for smoothing
+    // We use a lower value (0.1) for smoother jitter reduction but better tracking
+    const alpha = 0.1; 
+    const snapThresholdSq = 100 * 100; // Snap immediately if deviation is huge (e.g. teleport)
     
     const botCount = this.bots.length;
     for (let i = 0; i < botCount; i++) {
@@ -174,20 +165,25 @@ export class PhysicsEngine {
         for (let j = 0; j < pCount; j++) {
             const p = particles[j];
             
-            // Lerp X
-            const dx = p.pos.x - p.renderPos.x;
-            if (Math.abs(dx) < snapThreshold) {
+            // Safety: Handle NaN/Invalid state by resetting to current pos
+            if (!Number.isFinite(p.renderPos.x) || !Number.isFinite(p.renderPos.y)) {
                 p.renderPos.x = p.pos.x;
-            } else {
-                p.renderPos.x += dx * smoothing;
+                p.renderPos.y = p.pos.y;
+                continue;
             }
 
-            // Lerp Y
+            const dx = p.pos.x - p.renderPos.x;
             const dy = p.pos.y - p.renderPos.y;
-            if (Math.abs(dy) < snapThreshold) {
+            const distSq = dx*dx + dy*dy;
+            
+            // If the particle has moved too far in one frame (physics glitch or respawn), snap to it
+            if (distSq > snapThresholdSq) {
+                p.renderPos.x = p.pos.x;
                 p.renderPos.y = p.pos.y;
             } else {
-                p.renderPos.y += dy * smoothing;
+                // Apply Lerp: current = current + (target - current) * alpha
+                p.renderPos.x += dx * alpha;
+                p.renderPos.y += dy * alpha;
             }
         }
     }
@@ -195,7 +191,7 @@ export class PhysicsEngine {
 
   private applySocialForces(botCount: number) {
       const GROUP_REPULSION_RADIUS = 300; 
-      const GROUP_FORCE = 0.8; 
+      const GROUP_FORCE = 0.5; // Reduced from 0.8
       const SELF_REPULSION_RADIUS = 80; 
       const SELF_FORCE = 0.1;
 
@@ -211,28 +207,24 @@ export class PhysicsEngine {
               const dy = b1.centerOfMass.y - b2.centerOfMass.y;
               const distSq = dx*dx + dy*dy;
 
-              if (distSq < 0.1) continue; 
+              if (distSq < 0.1 || distSq > GROUP_REPULSION_RADIUS * GROUP_REPULSION_RADIUS) continue; 
 
               if (b1.groupId !== b2.groupId) {
-                  if (distSq < GROUP_REPULSION_RADIUS * GROUP_REPULSION_RADIUS) {
-                      const dist = Math.sqrt(distSq);
-                      const overlap = GROUP_REPULSION_RADIUS - dist;
-                      const f = (overlap / GROUP_REPULSION_RADIUS) * GROUP_FORCE;
-                      const fx = (dx / dist) * f;
-                      const fy = (dy / dist) * f;
-                      this.applyForceToBot(b1, fx, fy);
-                      this.applyForceToBot(b2, -fx, -fy);
-                  }
-              } else {
-                   if (distSq < SELF_REPULSION_RADIUS * SELF_REPULSION_RADIUS) {
-                      const dist = Math.sqrt(distSq);
-                      const overlap = SELF_REPULSION_RADIUS - dist;
-                      const f = (overlap / SELF_REPULSION_RADIUS) * SELF_FORCE;
-                      const fx = (dx / dist) * f;
-                      const fy = (dy / dist) * f;
-                      this.applyForceToBot(b1, fx, fy);
-                      this.applyForceToBot(b2, -fx, -fy);
-                   }
+                  const dist = Math.sqrt(distSq);
+                  const overlap = GROUP_REPULSION_RADIUS - dist;
+                  const f = (overlap / GROUP_REPULSION_RADIUS) * GROUP_FORCE;
+                  const fx = (dx / dist) * f;
+                  const fy = (dy / dist) * f;
+                  this.applyForceToBot(b1, fx, fy);
+                  this.applyForceToBot(b2, -fx, -fy);
+              } else if (distSq < SELF_REPULSION_RADIUS * SELF_REPULSION_RADIUS) {
+                  const dist = Math.sqrt(distSq);
+                  const overlap = SELF_REPULSION_RADIUS - dist;
+                  const f = (overlap / SELF_REPULSION_RADIUS) * SELF_FORCE;
+                  const fx = (dx / dist) * f;
+                  const fy = (dy / dist) * f;
+                  this.applyForceToBot(b1, fx, fy);
+                  this.applyForceToBot(b2, -fx, -fy);
               }
           }
       }
@@ -241,8 +233,9 @@ export class PhysicsEngine {
   private applyForceToBot(bot: Xenobot, fx: number, fy: number) {
       const count = bot.particles.length;
       if (count === 0) return;
-      const pFx = fx / count;
-      const pFy = fy / count;
+      // Distribute force but clamp it per particle to avoid sudden explosions
+      const pFx = Math.max(-2, Math.min(2, fx / count));
+      const pFy = Math.max(-2, Math.min(2, fy / count));
       for (const p of bot.particles) {
           p.force.x += pFx;
           p.force.y += pFy;
@@ -258,9 +251,8 @@ export class PhysicsEngine {
     const plasticity = this.config.plasticity;
     const memory = bot.genome.bioelectricMemory || 0.5;
     const groundY = this.groundY;
-    const acousticActive = this.config.acousticFreq > 100; // Trigger threshold
+    const acousticActive = this.config.acousticFreq > 100; 
 
-    // Metabolic cost: Existence consumes energy
     bot.energy -= METABOLIC_DECAY;
     bot.age++;
 
@@ -273,88 +265,78 @@ export class PhysicsEngine {
     const springs = bot.springs;
     const pCount = particles.length;
     const sCount = springs.length;
+    const invGroundY = 1.0 / (groundY || 1);
 
-    const chargeDensity = bot.totalCharge / (pCount || 1);
-    const liftFromCharge = chargeDensity * 0.3;
-    const baseBuoyancyFactor = 0.85 + liftFromCharge;
-    const currentStrength = 0.08;
-    const invGroundY = 1.0 / groundY;
+    // Calculate Average Velocity for Hydrodynamic Cohesion 
+    let avgVx = 0, avgVy = 0;
+    if (pCount > 0) {
+        for (let i = 0; i < pCount; i++) {
+            avgVx += (particles[i].pos.x - particles[i].oldPos.x);
+            avgVy += (particles[i].pos.y - particles[i].oldPos.y);
+        }
+        avgVx /= pCount;
+        avgVy /= pCount;
+    }
 
-    // Apply Ciliary Forces & Environmental Forces
+    // Forces from Particles (Gravity, Cilia, Environment)
     for (let i = 0; i < pCount; i++) {
       const p = particles[i];
-      
-      // Gravity & Buoyancy
       p.force.x = 0;
       p.force.y = gravity; 
 
       let depthRatio = p.pos.y * invGroundY;
-      if (depthRatio < 0) depthRatio = 0;
-      else if (depthRatio > 1) depthRatio = 1;
+      depthRatio = Math.max(0, Math.min(1, depthRatio));
 
-      const buoyancy = gravity * (baseBuoyancyFactor + depthRatio * 0.1); 
+      const buoyancy = gravity * (0.9 + depthRatio * 0.1); 
       p.force.y -= buoyancy;
 
-      const currentFlow = Math.sin(time * 0.5 + depthRatio * 4.0) * currentStrength;
+      const currentFlow = Math.sin(time * 0.5 + depthRatio * 4.0) * 0.08;
       p.force.x += currentFlow;
       
-      // Brownian Noise (Reduced)
-      p.force.x += (Math.random() - 0.5) * 0.2;
-      p.force.y += (Math.random() - 0.5) * 0.2;
+      // Brownian
+      p.force.x += (Math.random() - 0.5) * 0.5;
+      p.force.y += (Math.random() - 0.5) * 0.5;
 
-      // --- WORLD BOUNDARY REPULSION (Avoid Edges) ---
-      if (p.pos.x < EDGE_BUFFER) {
-          const push = (EDGE_BUFFER - p.pos.x) * 0.005; 
-          p.force.x += push;
-      } else if (p.pos.x > WORLD_WIDTH - EDGE_BUFFER) {
-          const push = (p.pos.x - (WORLD_WIDTH - EDGE_BUFFER)) * 0.005;
-          p.force.x -= push;
-      }
-
-      // --- CILIARY PROPULSION (Refined Peristaltic Wave) ---
-      // We implement a coordinated traveling wave along the body length.
-      // Direction: Head (Right) -> Tail (Left) to generate Forward (Right) thrust.
-      
-      const dx = p.pos.x - bot.centerOfMass.x;
-      const dy = p.pos.y - bot.centerOfMass.y;
-      
+      // Ciliary Propulsion
       if (acousticActive) {
-          // Linearizing stimulus forces all cilia to beat in unison forward
-          p.force.x += CILIA_FORCE * 1.5; 
+          p.force.x += CILIA_FORCE; 
       } else {
-          // Wave Parameters
-          // Frequency scales with bioelectric memory (plasticity).
-          const freq = 3.0 + (memory * 3.0); 
-          const k = 0.04; // Wave number
-
-          // Phase: travel left (against motion)
-          // phase = k*x + w*t
-          const phase = (dx * k) + (time * freq);
+          // Metachronal Wave Logic
+          const waveFreq = 3.0 + (memory * 2.0);
+          const currentPhase = p.phase - (time * waveFreq * Math.PI * 2);
+          const beat = Math.sin(currentPhase);
           
-          // Bioelectric Amplitude Modulation
-          // Use charge to synchronize and amplify stroke.
-          // Experimental: Stronger correlation to charge (0.5 base + 2.5 multiplier)
-          const intensity = 0.5 + p.charge * 2.5;
-
-          // Raised Sine Drive (0.0 to 1.0) -> Always pushing forward
-          // This ensures continuous forward thrust (no drag phase) for smooth "gliding".
-          const drive = (Math.sin(phase) + 1.0) * 0.5;
+          let thrustX = 0;
+          let liftY = 0;
           
-          // Apply Thrust (Propulsion)
-          p.force.x += CILIA_FORCE * intensity * drive;
+          if (beat > 0) {
+             thrustX = CILIA_FORCE * 1.5 * beat;
+             liftY = CILIA_FORCE * 0.2 * beat;
+          } else {
+             thrustX = CILIA_FORCE * 0.3 * beat; 
+             liftY = CILIA_FORCE * 1.0 * beat;   
+          }
+          
+          // Global Hydrodynamic Cohesion (Pull towards group average)
+          const pVx = p.pos.x - p.oldPos.x;
+          const pVy = p.pos.y - p.oldPos.y;
+          const cohesionStrength = 3.0 * memory; // Increased for global unity
+          
+          thrustX += (avgVx - pVx) * cohesionStrength;
+          liftY += (avgVy - pVy) * cohesionStrength;
 
-          // Stabilizing Undulation (Vertical)
-          // Creates a natural swimming motion but damps rotation.
-          const undulation = Math.cos(phase) * 0.15;
-          p.force.y += CILIA_FORCE * intensity * undulation;
-
-          // Streamlining (Anti-Tumble)
-          // Particles above CoM push down, below push up -> flattens bot to stream
-          // effectively counteracting rotational torque.
-          p.force.y -= dy * 0.01; 
+          // Noise reduction for higher memory/plasticity
+          if (memory < 0.8) {
+              const noiseScale = (0.8 - memory);
+              thrustX += (Math.random() - 0.5) * noiseScale * CILIA_FORCE;
+              liftY += (Math.random() - 0.5) * noiseScale * CILIA_FORCE;
+          }
+          
+          p.force.x += thrustX;
+          p.force.y += liftY;
       }
 
-      // Self-Assembly (Cohesion)
+      // Self Assembly / Cohesion
       const dxSelf = bot.centerOfMass.x - p.pos.x;
       const dySelf = bot.centerOfMass.y - p.pos.y;
       p.force.x += dxSelf * SURFACE_TENSION;
@@ -363,7 +345,30 @@ export class PhysicsEngine {
       p.charge *= decay;
     }
 
-    // Spring Physics
+    // Neighbor Interaction Force (Fluidic Coupling via Springs)
+    // This synchronizes the cilia impulse across the body structure, creating a unified wave.
+    for (let i = 0; i < sCount; i++) {
+        const s = springs[i];
+        const p1 = particles[s.p1];
+        const p2 = particles[s.p2];
+
+        // Coupling factor: Viscous force transfer between neighbors
+        // Higher memory = stronger coordinated movement
+        const coupling = 0.15 * memory; 
+
+        const fxDiff = p1.force.x - p2.force.x;
+        const fyDiff = p1.force.y - p2.force.y;
+
+        const transferX = fxDiff * coupling;
+        const transferY = fyDiff * coupling;
+
+        p1.force.x -= transferX;
+        p1.force.y -= transferY;
+        p2.force.x += transferX;
+        p2.force.y += transferY;
+    }
+
+    // Spring Forces (Structural Physics)
     for (let i = 0; i < sCount; i++) {
       const s = springs[i];
       const p1 = particles[s.p1];
@@ -374,61 +379,30 @@ export class PhysicsEngine {
       const distSq = dx * dx + dy * dy;
 
       if (distSq < 0.0001) continue;
-
       const dist = Math.sqrt(distSq);
 
       let targetLen = s.currentRestLength;
-      
       if (s.isMuscle) {
         bot.energy -= METABOLIC_DECAY * 0.1;
-
         const avgCharge = (p1.charge + p2.charge) * 0.5;
         const freqMod = 1.0 + avgCharge * 4.0; 
-        
-        // Coordinated muscle contraction using the pre-calculated phaseOffset
-        // phaseOffset is now derived from grid position in createBot
         const contraction = Math.sin(time * mSpeed * freqMod + (s.phaseOffset || 0));
         targetLen = s.currentRestLength * (1 + contraction * mStrength);
       }
 
       const diff = (dist - targetLen) / dist;
-      
-      // Hooke's Law
       const forceVal = s.stiffness * diff;
 
-      // Spring Damping Calculation
-      // Project relative velocity onto the spring axis to damp internal oscillations
-      const vx1 = p1.pos.x - p1.oldPos.x;
-      const vy1 = p1.pos.y - p1.oldPos.y;
-      const vx2 = p2.pos.x - p2.oldPos.x;
-      const vy2 = p2.pos.y - p2.oldPos.y;
-
-      const dvx = vx2 - vx1;
-      const dvy = vy2 - vy1;
-
-      // Normalize distance vector
-      const nx = dx / dist;
-      const ny = dy / dist;
-
-      // Relative velocity along spring
-      const relVel = dvx * nx + dvy * ny;
-      
-      // Damping coefficient (drastically reduced from 0.5 to 0.05 to prevent explosion)
-      const damping = 0.05; 
-      const dampForce = relVel * damping;
-
-      // Total Spring Force = Hooke + Damping
-      const totalForce = forceVal + dampForce;
-
-      const stress = diff < 0 ? -diff : diff; 
+      // Bio-Electricity Generation
+      const stress = Math.abs(diff); 
       const chargeGen = stress * 0.6;
-      
       if (chargeGen > 0.01) {
-        if (p1.charge + chargeGen > 1) p1.charge = 1; else p1.charge += chargeGen;
-        if (p2.charge + chargeGen > 1) p2.charge = 1; else p2.charge += chargeGen;
+        p1.charge = Math.min(1, p1.charge + chargeGen);
+        p2.charge = Math.min(1, p2.charge + chargeGen);
       }
       activeCharge += (p1.charge + p2.charge);
 
+      // Plasticity
       if (stress > 0.15) {
           s.currentRestLength += (dist - s.currentRestLength) * (plasticity * (0.2 + memory));
       } else {
@@ -437,8 +411,8 @@ export class PhysicsEngine {
           s.currentRestLength += (s.restLength - s.currentRestLength) * forgettingRate;
       }
 
-      const fx = nx * totalForce * 0.5;
-      const fy = ny * totalForce * 0.5;
+      const fx = dx * forceVal * 0.5;
+      const fy = dy * forceVal * 0.5;
 
       p1.force.x += fx;
       p1.force.y += fy;
@@ -448,29 +422,27 @@ export class PhysicsEngine {
     
     bot.totalCharge = activeCharge;
 
-    // Integration & Friction
+    // Integration
     let cx = 0, cy = 0;
     
-    const chargeDrag = 1.0 - (chargeDensity * 0.15);
-    const individualFactor = 1.0 + (memory * 0.005);
-    const baseFriction = fluidBaseFriction * individualFactor * chargeDrag;
-    
-    const WALL_BOUNCE = 0.3; // Amount of energy kept when hitting wall
-    const MAX_VELOCITY = 30; // Clamp velocity to prevent physics explosions
-
+    // Safety Clamp for Forces
     for (let i = 0; i < pCount; i++) {
       const p = particles[i];
       
+      // Clamp force to prevent explosion
+      p.force.x = Math.max(-MAX_FORCE, Math.min(MAX_FORCE, p.force.x));
+      p.force.y = Math.max(-MAX_FORCE, Math.min(MAX_FORCE, p.force.y));
+
       let depthVal = p.pos.y * invGroundY;
-      if (depthVal < 0) depthVal = 0;
+      depthVal = Math.max(0, Math.min(1, depthVal));
       const depthViscosity = 1.0 - (depthVal * 0.03);
       
-      const effectiveFriction = baseFriction * depthViscosity;
+      const effectiveFriction = fluidBaseFriction * depthViscosity;
 
       let vx = (p.pos.x - p.oldPos.x) * effectiveFriction;
       let vy = (p.pos.y - p.oldPos.y) * effectiveFriction;
 
-      // Velocity Clamping to prevent artifacts
+      // Clamp Velocity to prevent "infinite lines"
       vx = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, vx));
       vy = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, vy));
 
@@ -480,33 +452,22 @@ export class PhysicsEngine {
       p.pos.x += vx + p.force.x * dtSq;
       p.pos.y += vy + p.force.y * dtSq;
 
-      // --- WORLD BOUNDARY CONSTRAINTS (Hard Stops) ---
-      
-      // Floor
+      // Nan Check - Prevent poisoning of the simulation
+      if (!Number.isFinite(p.pos.x) || !Number.isFinite(p.pos.y)) {
+          p.pos.x = p.oldPos.x;
+          p.pos.y = p.oldPos.y;
+      }
+
+      // Ground Collision
       if (p.pos.y > groundY) {
         p.pos.y = groundY;
         const vy_impact = (p.pos.y - p.oldPos.y);
         p.oldPos.y = p.pos.y + vy_impact * 0.6; 
       }
-      
-      // Ceiling (Height Limit)
-      if (p.pos.y < WORLD_HEIGHT_LIMIT) {
-          p.pos.y = WORLD_HEIGHT_LIMIT;
+      // Ceiling
+      if (p.pos.y < -3000) {
+          p.pos.y = -3000;
           p.oldPos.y = p.pos.y;
-      }
-
-      // Left Wall
-      if (p.pos.x < 0) {
-          p.pos.x = 0;
-          const vx_impact = (p.pos.x - p.oldPos.x);
-          p.oldPos.x = p.pos.x + vx_impact * WALL_BOUNCE; // Reverse velocity slightly
-      }
-
-      // Right Wall
-      if (p.pos.x > WORLD_WIDTH) {
-          p.pos.x = WORLD_WIDTH;
-          const vx_impact = (p.pos.x - p.oldPos.x);
-          p.oldPos.x = p.pos.x + vx_impact * WALL_BOUNCE;
       }
 
       cx += p.pos.x;

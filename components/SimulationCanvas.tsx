@@ -398,10 +398,18 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foodRef, w
             
             // Calculate pulse intensity on CPU to save GPU cycles in the loop
             const charge = p.charge;
-            const pulseFreq = 0.2 + (1.0 - charge) * 4.0;
-            const pulseDepth = 0.3 + charge * 0.6;
+            
+            // Refined Pulse Logic
+            // Higher charge = Slower frequency (Concentration)
+            const pulseFreq = 0.5 + (1.0 - charge) * 3.0;
+            
+            // Higher charge = Deeper pulse (Heavy breathing/thinking)
+            const pulseDepth = 0.2 + charge * 0.6;
+            
             const pulse = 1.0 - pulseDepth * (0.5 + 0.5 * Math.sin(time * pulseFreq));
-            const intensity = charge * pulse * 0.12;
+            
+            // Scale down overall intensity (reduced to prevent obscuring)
+            const intensity = charge * pulse * 0.06;
             
             data[k*4] = screenX;
             data[k*4+1] = screenY;

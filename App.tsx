@@ -8,7 +8,7 @@ import { GenomeVisualizer } from './components/GenomeVisualizer';
 import { TitleScreen } from './components/TitleScreen';
 import { SettingsPanel } from './components/SettingsPanel';
 import { HelpModal } from './components/HelpModal';
-import { Xenobot, Genome, AnalysisResult, CameraState, SimulationConfig, SaveData } from './types';
+import { Xenobot, Genome, AnalysisResult, CameraState, SimulationConfig, SaveData, Food } from './types';
 import { DEFAULT_CONFIG, INITIAL_POPULATION_SIZE, EVOLUTION_INTERVAL } from './constants';
 import { ScanEye, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { PhysicsEngine } from './services/physicsEngine';
@@ -35,6 +35,7 @@ const App: React.FC = () => {
   
   // We use a Ref for bots to pass to Canvas to avoid re-renders
   const botsRef = useRef<Xenobot[]>([]); 
+  const foodRef = useRef<Food[]>([]);
   
   // Track best genomes for each group independently
   const [bestGenomeA, setBestGenomeA] = useState<Genome | null>(null);
@@ -101,6 +102,7 @@ const App: React.FC = () => {
 
     engineRef.current = engine;
     botsRef.current = engine.bots;
+    foodRef.current = engine.food;
   }, []);
 
   const evolveContinuous = () => {
@@ -125,7 +127,9 @@ const App: React.FC = () => {
           // Probabilistic Reproduction Check
           if (Math.random() > 0.005) return;
   
-          groupBots.sort((a, b) => b.centerOfMass.x - a.centerOfMass.x);
+          // CHANGE: Sort by Energy (Survival of the Fittest = Best Foragers)
+          // Previously this was sorted by X position which caused "Rightward Bias"
+          groupBots.sort((a, b) => b.energy - a.energy);
           
           if (groupBots.length >= targetGroupSize) {
                const victim = groupBots[groupBots.length - 1];
@@ -135,10 +139,15 @@ const App: React.FC = () => {
           const parent1 = groupBots[0];
           const parent2 = groupBots.length > 1 ? groupBots[1] : groupBots[0];
           
+          // Update fitness for the genetic algorithm helper
+          parent1.genome.fitness = parent1.energy;
+          parent2.genome.fitness = parent2.energy;
+          
           const parents = [parent1.genome, parent2.genome];
           const nextGenParams = evolvePopulation(parents, generation, 10);
           const childGenome = nextGenParams[nextGenParams.length - 1];
           
+          // Spawn near parent
           const spawnX = parent1.centerOfMass.x - 50 - Math.random() * 50; 
           const spawnY = parent1.centerOfMass.y + (Math.random() - 0.5) * 50;
           
@@ -160,17 +169,17 @@ const App: React.FC = () => {
     const engine = engineRef.current;
     if (!engine) return;
 
-    // Best A
+    // Best A (Energy based)
     const botsA = engine.bots.filter(b => b.groupId === 0);
     if (botsA.length > 0) {
-        const bestA = botsA.reduce((prev, curr) => (curr.centerOfMass.x > prev.centerOfMass.x ? curr : prev));
+        const bestA = botsA.reduce((prev, curr) => (curr.energy > prev.energy ? curr : prev));
         setBestGenomeA(bestA.genome);
     }
 
-    // Best B
+    // Best B (Energy based)
     const botsB = engine.bots.filter(b => b.groupId === 1);
     if (botsB.length > 0) {
-        const bestB = botsB.reduce((prev, curr) => (curr.centerOfMass.x > prev.centerOfMass.x ? curr : prev));
+        const bestB = botsB.reduce((prev, curr) => (curr.energy > prev.energy ? curr : prev));
         setBestGenomeB(bestB.genome);
     }
   };
@@ -184,6 +193,7 @@ const App: React.FC = () => {
           // IMPORTANT: Sync the Ref with the latest array from engine
           // Because engine methods like removeBot might replace the array reference
           botsRef.current = engine.bots; 
+          foodRef.current = engine.food;
 
           totalTickRef.current += 1;
           evolutionTimerRef.current += 1;
@@ -230,8 +240,8 @@ const App: React.FC = () => {
           if (groupA.length > 0) {
               let avgX = 0, avgY = 0;
               let count = 0;
-              // Only follow top 50% performers to keep camera moving forward
-              const sorted = [...groupA].sort((a,b) => b.centerOfMass.x - a.centerOfMass.x);
+              // Follow the highest energy bots (the successful ones)
+              const sorted = [...groupA].sort((a,b) => b.energy - a.energy);
               const topHalf = sorted.slice(0, Math.max(1, Math.ceil(sorted.length / 2)));
 
               topHalf.forEach(b => { 
@@ -244,18 +254,13 @@ const App: React.FC = () => {
                   avgX /= count;
                   avgY /= count;
 
-                  // Target: Keep swarm center at left 40% of screen to show path ahead
-                  // ScreenX = (WorldX - CamX) * Zoom + Width/2
-                  // We want ScreenX = 0.4 * Width (left side)
-                  // 0.4*W - 0.5*W = (AvgX - CamX) * Zoom
-                  // -0.1*W / Zoom = AvgX - CamX
-                  // CamX = AvgX + (0.1*W) / Zoom
-                  
-                  const targetCamX = avgX + (dimensions.width * 0.10 / camera.zoom); 
+                  // Target: Keep swarm center at left 35% of screen (0.15 offset from center)
+                  const targetCamX = avgX + (dimensions.width * 0.15 / camera.zoom); 
                   const targetCamY = avgY;
 
-                  // Fine-tuned lerp for smoother follow and reactivation (0.05)
+                  // Tuned lerp for smoother follow (0.05)
                   const lerp = 0.05; 
+                  
                   setCamera(prev => ({
                       ...prev,
                       x: prev.x + (targetCamX - prev.x) * lerp,
@@ -332,6 +337,7 @@ const App: React.FC = () => {
         <div className="relative w-full h-full overflow-hidden bg-deep-space">
           <SimulationCanvas 
             botsRef={botsRef}
+            foodRef={foodRef}
             width={dimensions.width}
             height={dimensions.height}
             groundY={config.groundHeight}

@@ -1,6 +1,6 @@
 
-import { Xenobot, Particle, Spring, Genome, CellType, SimulationConfig } from '../types';
-import { DEFAULT_CONFIG, TIMESTEP, CONSTRAINT_ITERATIONS, CILIA_FORCE, METABOLIC_DECAY, INITIAL_YOLK_ENERGY, SURFACE_TENSION } from '../constants';
+import { Xenobot, Particle, Spring, Genome, CellType, SimulationConfig, Food } from '../types';
+import { DEFAULT_CONFIG, TIMESTEP, CONSTRAINT_ITERATIONS, CILIA_FORCE, METABOLIC_DECAY, INITIAL_YOLK_ENERGY, SURFACE_TENSION, FOOD_COUNT, FOOD_ENERGY, FOOD_RADIUS } from '../constants';
 
 const uid = () => Math.random().toString(36).substr(2, 9);
 const MAX_FORCE = 10.0; // Prevent explosion
@@ -8,12 +8,40 @@ const MAX_VELOCITY = 15.0; // Prevent infinite streaks
 
 export class PhysicsEngine {
   bots: Xenobot[] = [];
+  food: Food[] = [];
   config: SimulationConfig;
   groundY: number;
 
   constructor(config: SimulationConfig = DEFAULT_CONFIG) {
     this.config = config;
     this.groundY = config.groundHeight;
+    this.initFood();
+  }
+
+  initFood() {
+    this.food = [];
+    for (let i = 0; i < FOOD_COUNT; i++) {
+        this.spawnFood();
+    }
+  }
+
+  spawnFood() {
+     // Spawn food in a wide area around the center, but dispersed
+     const spread = 2500; 
+     // REMOVED BIAS: Centered around 0 instead of 600
+     const x = (Math.random() - 0.5) * spread; 
+     const y = (Math.random() - 0.5) * spread * 0.5;
+     
+     // Keep within bounds roughly
+     const clampedY = Math.max(-1500, Math.min(this.groundY - 50, y));
+
+     this.food.push({
+         id: uid(),
+         x,
+         y: clampedY,
+         energy: FOOD_ENERGY,
+         phase: Math.random() * Math.PI * 2
+     });
   }
 
   addBot(bot: Xenobot) {
@@ -109,7 +137,8 @@ export class PhysicsEngine {
       totalCharge: 0,
       groupId,
       energy: INITIAL_YOLK_ENERGY,
-      age: 0
+      age: 0,
+      heading: Math.random() * Math.PI * 2 // Initialize random heading
     };
   }
 
@@ -121,11 +150,19 @@ export class PhysicsEngine {
     let totalMemory = 0;
     let livingCount = 0;
     
+    // Maintain food count
+    if (this.food.length < FOOD_COUNT) {
+        if (Math.random() < 0.1) this.spawnFood();
+    }
+
     for(let i = 0; i < botCount; i++) {
         const b = this.bots[i];
         if (!b.isDead) {
             totalMemory += b.genome.bioelectricMemory;
             livingCount++;
+            
+            // Check Food Collisions
+            this.checkFoodConsumption(b);
         }
     }
     
@@ -148,10 +185,44 @@ export class PhysicsEngine {
     this.smoothRenderPositions();
   }
   
+  checkFoodConsumption(bot: Xenobot) {
+      // Optimization: Check distance from center of mass first
+      const com = bot.centerOfMass;
+      // Rough bounding circle for bot
+      const botRadius = (bot.genome.gridSize * this.config.gridScale) / 1.5;
+
+      for (let i = this.food.length - 1; i >= 0; i--) {
+          const f = this.food[i];
+          const dx = com.x - f.x;
+          const dy = com.y - f.y;
+          const distSq = dx*dx + dy*dy;
+          
+          // Optimization: Check if food is even close to the bot's body
+          if (distSq < (botRadius + FOOD_RADIUS) ** 2) {
+               // Detailed check against particles
+               let eaten = false;
+               for (const p of bot.particles) {
+                   const pdx = p.pos.x - f.x;
+                   const pdy = p.pos.y - f.y;
+                   if (pdx*pdx + pdy*pdy < (FOOD_RADIUS + 10) ** 2) {
+                       eaten = true;
+                       break;
+                   }
+               }
+
+               if (eaten) {
+                   bot.energy += f.energy;
+                   this.food.splice(i, 1);
+                   // Immediate visual feedback or growth could go here
+               }
+          }
+      }
+  }
+  
   smoothRenderPositions() {
     // Linear Interpolation (Lerp) factor for smoothing
-    // We use a lower value (0.1) for smoother jitter reduction but better tracking
-    const alpha = 0.1; 
+    // Lower value = smoother but more lag. 0.15 is a good balance.
+    const alpha = 0.15; 
     const snapThresholdSq = 100 * 100; // Snap immediately if deviation is huge (e.g. teleport)
     
     const botCount = this.bots.length;
@@ -252,6 +323,7 @@ export class PhysicsEngine {
     const memory = bot.genome.bioelectricMemory || 0.5;
     const groundY = this.groundY;
     const acousticActive = this.config.acousticFreq > 100; 
+    const syncStrength = this.config.syncRate || 0.3;
 
     bot.energy -= METABOLIC_DECAY;
     bot.age++;
@@ -261,11 +333,46 @@ export class PhysicsEngine {
         return; 
     }
 
+    // --- SENSORY SYSTEM & STEERING ---
+    // Find closest food to steer towards
+    let targetHeading = bot.heading;
+    let shortestDistSq = Infinity;
+    const SENSOR_RADIUS_SQ = 600 * 600; // Awareness radius
+    
+    for (const f of this.food) {
+        const dx = f.x - bot.centerOfMass.x;
+        const dy = f.y - bot.centerOfMass.y;
+        const dSq = dx*dx + dy*dy;
+        if (dSq < SENSOR_RADIUS_SQ && dSq < shortestDistSq) {
+            shortestDistSq = dSq;
+            targetHeading = Math.atan2(dy, dx);
+        }
+    }
+    
+    // Adjust Heading
+    if (shortestDistSq < Infinity) {
+        // Steer towards food
+        const angleDiff = targetHeading - bot.heading;
+        // Normalize angle -PI to PI
+        let dTheta = angleDiff;
+        while (dTheta <= -Math.PI) dTheta += Math.PI*2;
+        while (dTheta > Math.PI) dTheta -= Math.PI*2;
+        
+        bot.heading += dTheta * 0.05; // Steering speed
+    } else {
+        // Random Wander
+        bot.heading += (Math.random() - 0.5) * 0.1;
+    }
+
     const particles = bot.particles;
     const springs = bot.springs;
     const pCount = particles.length;
     const sCount = springs.length;
     const invGroundY = 1.0 / (groundY || 1);
+
+    // Temp buffers for ciliary force synchronization
+    const ciliaForcesX = new Float32Array(pCount);
+    const ciliaForcesY = new Float32Array(pCount);
 
     // Calculate Average Velocity for Hydrodynamic Cohesion 
     let avgVx = 0, avgVy = 0;
@@ -297,44 +404,61 @@ export class PhysicsEngine {
       p.force.x += (Math.random() - 0.5) * 0.5;
       p.force.y += (Math.random() - 0.5) * 0.5;
 
-      // Ciliary Propulsion
+      // Ciliary Propulsion Logic
+      let propX = 0;
+      let propY = 0;
+
       if (acousticActive) {
-          p.force.x += CILIA_FORCE; 
+          // Linearizing Stimulus: Force global alignment
+          propX = CILIA_FORCE; 
+          bot.heading = bot.heading * 0.95; // Decay heading to 0 (right)
       } else {
           // Metachronal Wave Logic
+          const relX = (p.pos.x - bot.centerOfMass.x) * 0.05;
+          const relY = (p.pos.y - bot.centerOfMass.y) * 0.05;
+
           const waveFreq = 3.0 + (memory * 2.0);
-          const currentPhase = p.phase - (time * waveFreq * Math.PI * 2);
+          
+          // Spatial phase shift aligns movement
+          const spatialPhase = p.phase + relX - relY;
+          const currentPhase = spatialPhase - (time * waveFreq * Math.PI * 2);
+          
           const beat = Math.sin(currentPhase);
           
-          let thrustX = 0;
-          let liftY = 0;
-          
+          // Calculate Thrust Magnitude (Asymmetric stroke)
+          let thrustMag = 0;
           if (beat > 0) {
-             thrustX = CILIA_FORCE * 1.5 * beat;
-             liftY = CILIA_FORCE * 0.2 * beat;
+             thrustMag = CILIA_FORCE * 2.0 * beat; // Power stroke
           } else {
-             thrustX = CILIA_FORCE * 0.3 * beat; 
-             liftY = CILIA_FORCE * 1.0 * beat;   
+             thrustMag = CILIA_FORCE * 0.5 * beat; // Recovery stroke (negative)
           }
           
-          // Global Hydrodynamic Cohesion (Pull towards group average)
+          // Apply thrust ALONG the bot's heading
+          const hx = Math.cos(bot.heading);
+          const hy = Math.sin(bot.heading);
+          
+          propX = thrustMag * hx;
+          propY = thrustMag * hy;
+          
+          // Global Hydrodynamic Cohesion (Pull towards group average velocity)
           const pVx = p.pos.x - p.oldPos.x;
           const pVy = p.pos.y - p.oldPos.y;
-          const cohesionStrength = 3.0 * memory; // Increased for global unity
+          const cohesionStrength = 3.0 * memory; 
           
-          thrustX += (avgVx - pVx) * cohesionStrength;
-          liftY += (avgVy - pVy) * cohesionStrength;
+          propX += (avgVx - pVx) * cohesionStrength;
+          propY += (avgVy - pVy) * cohesionStrength;
 
           // Noise reduction for higher memory/plasticity
           if (memory < 0.8) {
               const noiseScale = (0.8 - memory);
-              thrustX += (Math.random() - 0.5) * noiseScale * CILIA_FORCE;
-              liftY += (Math.random() - 0.5) * noiseScale * CILIA_FORCE;
+              propX += (Math.random() - 0.5) * noiseScale * CILIA_FORCE;
+              propY += (Math.random() - 0.5) * noiseScale * CILIA_FORCE;
           }
-          
-          p.force.x += thrustX;
-          p.force.y += liftY;
       }
+      
+      // Store ciliary force for synchronization (do not add to p.force yet)
+      ciliaForcesX[i] = propX;
+      ciliaForcesY[i] = propY;
 
       // Self Assembly / Cohesion
       const dxSelf = bot.centerOfMass.x - p.pos.x;
@@ -345,27 +469,57 @@ export class PhysicsEngine {
       p.charge *= decay;
     }
 
-    // Neighbor Interaction Force (Fluidic Coupling via Springs)
-    // This synchronizes the cilia impulse across the body structure, creating a unified wave.
+    // Synchronize Ciliary Forces (Neighbor Smoothing)
+    // This allows adjacent cells to coordinate their strokes, creating better waves
+    for (let i = 0; i < sCount; i++) {
+        const s = springs[i];
+        const i1 = s.p1;
+        const i2 = s.p2;
+
+        const avgX = (ciliaForcesX[i1] + ciliaForcesX[i2]) * 0.5;
+        const avgY = (ciliaForcesY[i1] + ciliaForcesY[i2]) * 0.5;
+
+        const diffX = avgX - ciliaForcesX[i1];
+        const diffY = avgY - ciliaForcesY[i1];
+
+        // Blend forces based on sync rate
+        ciliaForcesX[i1] += diffX * syncStrength;
+        ciliaForcesY[i1] += diffY * syncStrength;
+        
+        ciliaForcesX[i2] += (avgX - ciliaForcesX[i2]) * syncStrength;
+        ciliaForcesY[i2] += (avgY - ciliaForcesY[i2]) * syncStrength;
+    }
+
+    // Apply Final Synchronized Ciliary Forces
+    for (let i = 0; i < pCount; i++) {
+        particles[i].force.x += ciliaForcesX[i];
+        particles[i].force.y += ciliaForcesY[i];
+    }
+
+    // Neighbor Interaction Force (Viscous Coupling)
+    // Synchronize force application across the body structure for unified movement
     for (let i = 0; i < sCount; i++) {
         const s = springs[i];
         const p1 = particles[s.p1];
         const p2 = particles[s.p2];
 
-        // Coupling factor: Viscous force transfer between neighbors
-        // Higher memory = stronger coordinated movement
-        const coupling = 0.15 * memory; 
+        // Increased coupling for better cohesion (Low-pass filter on forces)
+        const coupling = 0.2 + (memory * 0.3); // Dynamic coupling based on brain plasticity
 
-        const fxDiff = p1.force.x - p2.force.x;
-        const fyDiff = p1.force.y - p2.force.y;
+        // Average forces between neighbors
+        const avgFx = (p1.force.x + p2.force.x) * 0.5;
+        const avgFy = (p1.force.y + p2.force.y) * 0.5;
 
-        const transferX = fxDiff * coupling;
-        const transferY = fyDiff * coupling;
-
-        p1.force.x -= transferX;
-        p1.force.y -= transferY;
-        p2.force.x += transferX;
-        p2.force.y += transferY;
+        // Apply corrective smoothing force
+        const transferX = (avgFx - p1.force.x) * coupling;
+        const transferY = (avgFy - p1.force.y) * coupling;
+        
+        // Push p1 towards avg
+        p1.force.x += transferX;
+        p1.force.y += transferY;
+        
+        p2.force.x += (avgFx - p2.force.x) * coupling;
+        p2.force.y += (avgFy - p2.force.y) * coupling;
     }
 
     // Spring Forces (Structural Physics)
@@ -479,10 +633,3 @@ export class PhysicsEngine {
       bot.centerOfMass.y = cy / pCount;
     }
   }
-
-  evaluateFitness(bot: Xenobot): number {
-    if (bot.isDead) return 0;
-    const dist = bot.centerOfMass.x - bot.startPosition.x;
-    return dist < 0 ? 0 : dist; 
-  }
-}

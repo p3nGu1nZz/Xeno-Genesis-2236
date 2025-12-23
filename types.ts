@@ -61,6 +61,15 @@ export interface Xenobot {
   groupId: number; // 0 for Group A, 1 for Group B
   energy: number; // Metabolic reserve (Yolk platelets)
   age: number;
+  heading: number; // Current movement direction angle
+}
+
+export interface Food {
+  id: string;
+  x: number;
+  y: number;
+  energy: number;
+  phase: number; // For visual pulsing
 }
 
 export interface SimulationConfig {

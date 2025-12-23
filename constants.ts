@@ -29,6 +29,7 @@ export const COLORS = {
   SPRING_PASSIVE: 'rgba(255, 255, 255, 0.2)',
   SPRING_ACTIVE: 'rgba(239, 68, 68, 0.6)',
   BIO_FIELD: '#00f3ff', 
+  FOOD: '#39ff14',
 };
 
 export const TIMESTEP = 0.8; // Reduced from 1.0 for better stability
@@ -36,6 +37,9 @@ export const CONSTRAINT_ITERATIONS = 6;
 
 // Biological Constants based on papers
 export const CILIA_FORCE = 0.4; // Reduced from 0.6 to prevent explosion
-export const METABOLIC_DECAY = 0.05; 
-export const INITIAL_YOLK_ENERGY = 1000; 
-export const SURFACE_TENSION = 0.005; // Reduced (was 0.02) to allow soft-body deformation/wobble
+export const METABOLIC_DECAY = 0.08; // Increased slightly to make food necessary
+export const INITIAL_YOLK_ENERGY = 1200; 
+export const SURFACE_TENSION = 0.005; 
+export const FOOD_COUNT = 40;
+export const FOOD_ENERGY = 600;
+export const FOOD_RADIUS = 15;

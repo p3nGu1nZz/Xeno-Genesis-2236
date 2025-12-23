@@ -1,7 +1,7 @@
 
 import React, { useRef, useEffect, useLayoutEffect } from 'react';
-import { Xenobot, CameraState } from '../types';
-import { COLORS } from '../constants';
+import { Xenobot, CameraState, Food } from '../types';
+import { COLORS, FOOD_RADIUS } from '../constants';
 
 const MAX_PARTICLES = 128; 
 
@@ -30,21 +30,15 @@ const FS_SOURCE = `
   float noise(vec2 p) {
     vec2 i = floor(p);
     vec2 f = fract(p);
-    f = f * f * (3.0 - 2.0 * f);
+    // Optimization: Linear interpolation instead of Hermite cubic for performance
+    // f = f * f * (3.0 - 2.0 * f);
     return mix(mix(hash(i + vec2(0.0, 0.0)), hash(i + vec2(1.0, 0.0)), f.x),
                mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
   }
 
   float fbm(vec2 p) {
-      float v = 0.0;
-      float a = 0.5;
-      mat2 rot = mat2(cos(0.5), sin(0.5), -sin(0.5), cos(0.5));
-      for (int i = 0; i < 3; i++) {
-          v += a * noise(p);
-          p = rot * p * 2.0;
-          a *= 0.5;
-      }
-      return v;
+      // Optimization: Single iteration noise instead of loop
+      return noise(p);
   }
 
   void main() {
@@ -60,22 +54,24 @@ const FS_SOURCE = `
         vec2 p_uv = vec2(p.x, u_resolution.y - p.y) / u_resolution.xy; 
         vec2 diff = (uv - p_uv);
         diff.x *= aspect;
-        float dist = length(diff);
+        
+        // Optimization: Use dot product for squared distance to avoid expensive sqrt()
+        float distSq = dot(diff, diff);
+        
         float charge = p.z;
         float memory = p.w;
         
         if (charge > 0.01) {
-            // Refined Pulse Logic:
-            // High charge = Much slower, deeper pulses (Concentrated thought)
-            float pulseFrequency = 0.5 + (1.0 - charge) * 8.0; 
-            float pulseDepth = 0.2 + charge * 0.7; 
+            float pulseFrequency = 0.2 + (1.0 - charge) * 4.0; 
+            float pulseDepth = 0.3 + charge * 0.6; 
             
             float pulse = 1.0 - pulseDepth * (0.5 + 0.5 * sin(u_time * pulseFrequency));
             
-            // Reduced intensity multiplier (0.25) to prevent obscuring the bots
-            float intensity = charge * pulse * 0.25; 
-            float contrib = (intensity * 0.002) / (dist * dist + 0.0001);
-            contrib = min(contrib, 0.8); // Stricter blowout cap
+            float intensity = charge * pulse * 0.12; 
+            
+            // Use distSq directly in falloff calculation
+            float contrib = (intensity * 0.002) / (distSq + 0.0001);
+            contrib = min(contrib, 0.8); 
 
             field += contrib;
             weightedMemory += memory * contrib;
@@ -93,7 +89,8 @@ const FS_SOURCE = `
     ) * field * 0.15; 
 
     vec2 worldUV = (gl_FragCoord.xy / u_zoom) - u_offset + flowOffset;
-    float n = fbm(worldUV * 0.002 + vec2(u_time * 0.1, u_time * 0.05));
+    // Adjusted scale since we only have 1 layer of noise now
+    float n = fbm(worldUV * 0.003 + vec2(u_time * 0.1, u_time * 0.05));
     float flow = field * (0.5 + 0.5 * n);
     
     vec4 color = vec4(0.0);
@@ -110,7 +107,7 @@ const FS_SOURCE = `
        rgb = mix(rgb, cBright, smoothstep(0.5, 1.0, t));
        if (avgMemory < 0.3) rgb += (hash(uv * u_time) * 0.1) * (1.0 - t);
        float alpha = smoothstep(0.02, 0.3, flow);
-       alpha = min(alpha, 0.5); // Reduced max alpha slightly
+       alpha = min(alpha, 0.5); 
        color = vec4(rgb * alpha, alpha);
     }
     gl_FragColor = color;
@@ -119,13 +116,14 @@ const FS_SOURCE = `
 
 interface SimulationCanvasProps {
   botsRef: React.MutableRefObject<Xenobot[]>; 
+  foodRef: React.MutableRefObject<Food[]>;
   width: number;
   height: number;
   groundY: number;
   camera: CameraState;
 }
 
-const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, width, height, groundY, camera }) => {
+const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foodRef, width, height, groundY, camera }) => {
   const canvas2dRef = useRef<HTMLCanvasElement>(null);
   const canvasGlRef = useRef<HTMLCanvasElement>(null);
   const glContextRef = useRef<WebGLRenderingContext | null>(null);
@@ -182,6 +180,8 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, width, hei
   // --- Main Render Loop (Decoupled from React State) ---
   const render = () => {
     const bots = botsRef.current;
+    const food = foodRef.current;
+    
     if (!bots) {
         requestRef.current = requestAnimationFrame(render);
         return;
@@ -222,6 +222,30 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, width, hei
           ctx.moveTo(startX - 1000, groundY);
           ctx.lineTo(endX + 1000, groundY);
           ctx.stroke();
+          ctx.shadowBlur = 0;
+      }
+      
+      // Render Food
+      if (food && food.length > 0) {
+          const time = Date.now() * 0.003;
+          ctx.fillStyle = COLORS.FOOD;
+          ctx.shadowColor = COLORS.FOOD;
+          ctx.shadowBlur = 15;
+          
+          for (const f of food) {
+              // Safety check
+              if (!Number.isFinite(f.x) || !Number.isFinite(f.y)) continue;
+              
+              // Only draw if visible
+              if (f.x < startX || f.x > endX || f.y < startY || f.y > endY) continue;
+
+              const pulse = Math.sin(time + f.phase) * 2;
+              const radius = Math.max(2, FOOD_RADIUS + pulse);
+
+              ctx.beginPath();
+              ctx.arc(f.x, f.y, radius, 0, Math.PI * 2);
+              ctx.fill();
+          }
           ctx.shadowBlur = 0;
       }
 

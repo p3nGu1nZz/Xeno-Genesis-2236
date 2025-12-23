@@ -1,10 +1,10 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { analyzeXenobot } from './services/geminiService';
-import SimulationCanvas from './components/SimulationCanvas';
+import { SimulationCanvas } from './components/SimulationCanvas';
 import { Controls } from './components/Controls';
 import { AnalysisPanel } from './components/AnalysisPanel';
-import { GenomeVisualizer } from './components/GenomeVisualizer';
+import { GenomePanel } from './components/GenomePanel';
 import { TitleScreen } from './components/TitleScreen';
 import { SettingsPanel } from './components/SettingsPanel';
 import { HelpModal } from './components/HelpModal';
@@ -28,9 +28,8 @@ const App: React.FC = () => {
   const [acousticActive, setAcousticActive] = useState(false);
   const [evolutionProgress, setEvolutionProgress] = useState(0);
   
-  // Genome Visibility State (Default Minimized/Hidden)
-  const [showGenomeA, setShowGenomeA] = useState(false);
-  const [showGenomeB, setShowGenomeB] = useState(false);
+  // Genome Visibility State
+  const [showGenomePanel, setShowGenomePanel] = useState(false);
   
   // Simulation Engine State (Main Thread)
   const engineRef = useRef<PhysicsEngine | null>(null);
@@ -330,10 +329,11 @@ const App: React.FC = () => {
                 acousticActive={acousticActive}
                 isCollapsed={isSidebarCollapsed}
                 onToggleCollapse={() => setSidebarCollapsed(!isSidebarCollapsed)}
-                showGenomeA={showGenomeA}
-                onToggleGenomeA={() => setShowGenomeA(!showGenomeA)}
-                showGenomeB={showGenomeB}
-                onToggleGenomeB={() => setShowGenomeB(!showGenomeB)}
+                // We use these toggles to open the main Genome Panel now
+                showGenomeA={showGenomePanel}
+                onToggleGenomeA={() => setShowGenomePanel(!showGenomePanel)}
+                showGenomeB={showGenomePanel}
+                onToggleGenomeB={() => setShowGenomePanel(!showGenomePanel)}
              />
           </div>
           
@@ -371,21 +371,13 @@ const App: React.FC = () => {
               </button>
           </div>
 
-          <GenomeVisualizer 
-              genome={bestGenomeA} 
-              label="GROUP A (NATIVE)" 
-              borderColor="border-neon-cyan" 
-              initialPosition={{x: 350, y: 30}} 
-              hidden={!showGenomeA} 
-              onMinimize={() => setShowGenomeA(false)} 
-          />
-          <GenomeVisualizer 
-              genome={bestGenomeB} 
-              label="GROUP B (INVADER)" 
-              borderColor="border-neon-magenta" 
-              initialPosition={{x: 350, y: 300}} 
-              hidden={!showGenomeB} 
-              onMinimize={() => setShowGenomeB(false)} 
+          <GenomePanel 
+              genomes={[
+                  { name: "GROUP A (NATIVE)", genome: bestGenomeA, color: '#00f3ff' },
+                  { name: "GROUP B (INVADER)", genome: bestGenomeB, color: '#ff00ff' }
+              ]}
+              hidden={!showGenomePanel}
+              onClose={() => setShowGenomePanel(false)}
           />
         </div>
       )}

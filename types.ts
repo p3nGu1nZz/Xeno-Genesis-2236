@@ -62,6 +62,8 @@ export interface Xenobot {
   energy: number; // Metabolic reserve (Yolk platelets)
   age: number;
   heading: number; // Current movement direction angle
+  irruption: number; // Mental Causation: Magnitude of internal will exerted on matter
+  absorption: number; // Conscious Experience: Magnitude of material events integrated into mind
 }
 
 export interface Food {

@@ -1,4 +1,3 @@
-
 import React, { useRef, useEffect, useLayoutEffect } from 'react';
 import { Xenobot, CameraState, Food } from '../types';
 import { COLORS, FOOD_RADIUS } from '../constants';
@@ -16,7 +15,7 @@ const FS_SOURCE = `
   precision mediump float;
   uniform vec2 u_resolution;
   uniform float u_time;
-  uniform vec4 u_particles[${MAX_PARTICLES}]; // x, y, intensity, memory
+  uniform vec4 u_particles[${MAX_PARTICLES}]; // x, y, intensity, irruption
   uniform int u_count;
   uniform vec2 u_offset; 
   uniform float u_zoom;
@@ -45,7 +44,7 @@ const FS_SOURCE = `
     vec2 uv = gl_FragCoord.xy / u_resolution.xy;
     float aspect = u_resolution.x / u_resolution.y;
     float field = 0.0;
-    float weightedMemory = 0.0;
+    float weightedIrruption = 0.0;
     
     for (int i = 0; i < ${MAX_PARTICLES}; i++) {
         if (i >= u_count) break;
@@ -60,7 +59,7 @@ const FS_SOURCE = `
         
         // Intensity is pre-calculated in JS to save sin() calls per pixel
         float intensity = p.z; 
-        float memory = p.w;
+        float irruption = p.w;
         
         // Optimization: Cull very low intensity influences
         if (intensity > 0.001) {
@@ -69,13 +68,13 @@ const FS_SOURCE = `
             contrib = min(contrib, 0.8); 
 
             field += contrib;
-            weightedMemory += memory * contrib;
+            weightedIrruption += irruption * contrib;
         }
     }
     
-    float avgMemory = 0.0;
+    float avgIrruption = 0.0;
     if (field > 0.0001) {
-        avgMemory = weightedMemory / field;
+        avgIrruption = weightedIrruption / field;
     }
     
     vec2 flowOffset = vec2(
@@ -90,9 +89,17 @@ const FS_SOURCE = `
     
     vec4 color = vec4(0.0);
     if (flow > 0.05) {
+       // Visualize Irruption (Mental Causation) as Red/Magenta shift
        vec3 cLow = vec3(0.6, 0.0, 0.9);
        vec3 cHigh = vec3(0.0, 1.0, 0.9);
-       vec3 baseColor = mix(cLow, cHigh, smoothstep(0.2, 0.8, avgMemory));
+       
+       // Modulate base color with irruption level
+       vec3 cIrruption = vec3(1.0, 0.2, 0.5); // Hot pink/Red for action
+       
+       vec3 baseColor = mix(cLow, cHigh, 0.5);
+       // Shift towards irruption color based on avgIrruption
+       baseColor = mix(baseColor, cIrruption, min(1.0, avgIrruption * 2.0));
+
        vec3 cDark = baseColor * 0.2;
        vec3 cMid = baseColor;
        vec3 cBright = vec3(0.9, 1.0, 1.0); 
@@ -100,7 +107,7 @@ const FS_SOURCE = `
        float t = smoothstep(0.05, 1.0, flow);
        vec3 rgb = mix(cDark, cMid, smoothstep(0.0, 0.5, t));
        rgb = mix(rgb, cBright, smoothstep(0.5, 1.0, t));
-       if (avgMemory < 0.3) rgb += (hash(uv * u_time) * 0.1) * (1.0 - t);
+       
        float alpha = smoothstep(0.02, 0.3, flow);
        alpha = min(alpha, 0.5); 
        color = vec4(rgb * alpha, alpha);
@@ -118,7 +125,7 @@ interface SimulationCanvasProps {
   camera: CameraState;
 }
 
-const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foodRef, width, height, groundY, camera }) => {
+export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foodRef, width, height, groundY, camera }) => {
   const canvas2dRef = useRef<HTMLCanvasElement>(null);
   const canvasGlRef = useRef<HTMLCanvasElement>(null);
   const glContextRef = useRef<WebGLRenderingContext | null>(null);
@@ -253,6 +260,16 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foodRef, w
         const sCount = springs.length;
         const particles = bot.particles;
 
+        // Visualizing Absorption (Conscious Experience)
+        if (bot.absorption > 0.1) {
+            const com = bot.centerOfMass;
+            ctx.beginPath();
+            ctx.arc(com.x, com.y, 40 * bot.absorption, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(0, 255, 200, ${bot.absorption * 0.8})`;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+
         for (let j = 0; j < sCount; j++) {
             const s = springs[j];
             const p1 = particles[s.p1];
@@ -277,8 +294,15 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foodRef, w
             
             if (s.isMuscle) {
                const strain = Math.abs(dist - s.currentRestLength) / (s.currentRestLength || 1);
-               const intensity = Math.min(1.0, strain * 4.0); 
-               ctx.strokeStyle = `rgba(255, 80, 100, ${0.2 + intensity * 0.6})`;
+               // Add Irruption visualization to muscles
+               const intensity = Math.min(1.0, strain * 4.0 + bot.irruption * 0.5); 
+               
+               // Shift to hot pink/red on high irruption
+               const r = 255;
+               const g = Math.max(0, 80 - bot.irruption * 80);
+               const b = Math.max(100, 100 - bot.irruption * 100);
+
+               ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${0.2 + intensity * 0.6})`;
                ctx.lineWidth = Math.min(4, 1.5 + intensity * 2.5); // Clamp max width
             } else {
                const strain = Math.abs(dist - s.currentRestLength) / (s.currentRestLength || 1);
@@ -414,7 +438,7 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foodRef, w
             data[k*4] = screenX;
             data[k*4+1] = screenY;
             data[k*4+2] = intensity; // Pass calculated intensity instead of raw charge
-            data[k*4+3] = bot.genome.bioelectricMemory;
+            data[k*4+3] = bot.irruption; // Pass Irruption level to shader
         }
 
         const uRes = gl.getUniformLocation(program, 'u_resolution');
@@ -470,5 +494,3 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foodRef, w
     </div>
   );
 };
-
-export default SimulationCanvas;

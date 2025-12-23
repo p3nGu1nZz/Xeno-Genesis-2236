@@ -6,7 +6,7 @@ import { Xenobot, AnalysisResult, CellType } from "../types";
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export async function analyzeXenobot(bot: Xenobot): Promise<AnalysisResult> {
-  const { genome, age, energy } = bot;
+  const { genome, age, energy, irruption, absorption } = bot;
 
   // Serialize the grid for the LLM
   let gridVisualization = "";
@@ -24,6 +24,9 @@ export async function analyzeXenobot(bot: Xenobot): Promise<AnalysisResult> {
 
   const prompt = `
     You are a xenobiologist analyzing a synthetic lifeform (Xenobot) in a physics simulation.
+    The simulation tracks two Mind-Body Operators based on philosophical biology:
+    1. Irruption (Mental Causation): The agent's ability to exert force/will on matter. Current Level: ${irruption.toFixed(2)}
+    2. Absorption (Conscious Experience): The agent's intake of sensory/material events. Current Level: ${absorption.toFixed(2)}
     
     Structure Grid (S=Skin, M=Muscle, N=Neuron, .=Empty):
     ${gridVisualization}
@@ -34,9 +37,9 @@ export async function analyzeXenobot(bot: Xenobot): Promise<AnalysisResult> {
     - Bioelectric Plasticity: ${genome.bioelectricMemory.toFixed(3)}
     
     Task:
-    1. Analyze its morphology (how its structure might affect movement).
-    2. Suggest an evolutionary mutation to improve locomotion efficiency.
-    3. Provide a creative scientific species name and brief biological context.
+    1. Analyze its morphology (how its structure might affect movement) considering its Irruption capabilities.
+    2. Suggest an evolutionary mutation to improve locomotion efficiency or Absorption (sensing).
+    3. Provide a creative scientific species name and brief biological context referring to its Mind-Body coherence.
     
     Output strictly valid JSON.
   `;

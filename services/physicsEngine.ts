@@ -8,6 +8,7 @@ const MAX_FORCE = 10.0;
 const MAX_VELOCITY = 15.0;
 const PARTICLE_MAINTENANCE_COST = 0.005;
 const BOUNDARY_LIMIT = 2000; // Edge of the safe zone
+const COLLISION_RADIUS = 9; // Slightly larger than render radius (8)
 
 export class PhysicsEngine {
   bots: Xenobot[] = [];
@@ -29,10 +30,15 @@ export class PhysicsEngine {
   }
 
   spawnFood() {
-     const spread = 2500; 
-     const x = (Math.random() - 0.5) * spread; 
-     const y = (Math.random() - 0.5) * spread * 0.5;
-     const clampedY = Math.max(-1500, Math.min(this.groundY - 50, y));
+     // Expand spread to cover entire arena
+     const spreadX = 4000; 
+     const spreadY = 3000;
+
+     const x = (Math.random() - 0.5) * spreadX; 
+     // Allow food to spawn higher up but keep it below a certain ceiling and above ground
+     const y = (Math.random() - 0.5) * spreadY;
+     
+     const clampedY = Math.max(-2000, Math.min(this.groundY - 50, y));
 
      this.food.push({
          id: uid(),
@@ -133,7 +139,9 @@ export class PhysicsEngine {
       groupId,
       energy: INITIAL_YOLK_ENERGY,
       age: 0,
-      heading: Math.random() * Math.PI * 2 
+      heading: Math.random() * Math.PI * 2,
+      irruption: 0,
+      absorption: 0
     };
   }
 
@@ -201,7 +209,6 @@ export class PhysicsEngine {
         if (!b.isDead) {
             totalMemory += b.genome.bioelectricMemory;
             livingCount++;
-            this.checkFoodConsumption(b);
         }
     }
     
@@ -213,6 +220,7 @@ export class PhysicsEngine {
     // Optimized: Apply social forces
     if (botCount > 1) {
         this.applySocialForces(botCount);
+        this.resolveCollisions(botCount);
     }
 
     // Update each bot
@@ -225,41 +233,13 @@ export class PhysicsEngine {
     this.smoothRenderPositions();
   }
   
-  checkFoodConsumption(bot: Xenobot) {
-      const com = bot.centerOfMass;
-      // Heuristic bounding check
-      const botRadius = (bot.genome.gridSize * this.config.gridScale) / 1.5;
-
-      for (let i = this.food.length - 1; i >= 0; i--) {
-          const f = this.food[i];
-          const dx = com.x - f.x;
-          const dy = com.y - f.y;
-          const distSq = dx*dx + dy*dy;
-          
-          if (distSq < (botRadius + FOOD_RADIUS) ** 2) {
-               // Detailed check
-               let eaten = false;
-               for (const p of bot.particles) {
-                   const pdx = p.pos.x - f.x;
-                   const pdy = p.pos.y - f.y;
-                   if (pdx*pdx + pdy*pdy < (FOOD_RADIUS + 10) ** 2) {
-                       eaten = true;
-                       break;
-                   }
-               }
-
-               if (eaten) {
-                   bot.energy += f.energy;
-                   this.food.splice(i, 1);
-               }
-          }
-      }
-  }
-  
   smoothRenderPositions() {
-    const alpha = 0.35; 
-    const snapThresholdSq = 50 * 50;
-    
+    // Implement Lerp (Linear Interpolation) for smoother rendering
+    // Alpha determines how quickly renderPos catches up to physics pos
+    const alpha = 0.2; 
+    const snapThresholdSq = 100 * 100; // Snap if distance is large (e.g. initial spawn)
+    const sleepThresholdSq = 0.01; // Avoid micro-jitter updates
+
     for (const bot of this.bots) {
         if (bot.isDead) continue;
         for (const p of bot.particles) {
@@ -277,12 +257,70 @@ export class PhysicsEngine {
             if (distSq > snapThresholdSq) {
                 p.renderPos.x = p.pos.x;
                 p.renderPos.y = p.pos.y;
-            } else {
+            } else if (distSq > sleepThresholdSq) {
+                // Apply Lerp
                 p.renderPos.x += dx * alpha;
                 p.renderPos.y += dy * alpha;
+            } else {
+                p.renderPos.x = p.pos.x;
+                p.renderPos.y = p.pos.y;
             }
         }
     }
+  }
+
+  // Basic Collider Implementation to prevent overlap
+  private resolveCollisions(botCount: number) {
+      for (let i = 0; i < botCount; i++) {
+          const b1 = this.bots[i];
+          if (b1.isDead) continue;
+
+          for (let j = i + 1; j < botCount; j++) {
+              const b2 = this.bots[j];
+              if (b2.isDead) continue;
+
+              // Broad Phase: AABB / Bounding Circle
+              const dx = b1.centerOfMass.x - b2.centerOfMass.x;
+              const dy = b1.centerOfMass.y - b2.centerOfMass.y;
+              const distSq = dx*dx + dy*dy;
+              const combinedRadius = 300; // Approximate radius of a bot
+
+              if (distSq > combinedRadius * combinedRadius) continue;
+
+              // Narrow Phase: Particle vs Particle
+              for (const p1 of b1.particles) {
+                  for (const p2 of b2.particles) {
+                      const pdx = p1.pos.x - p2.pos.x;
+                      const pdy = p1.pos.y - p2.pos.y;
+                      const pDistSq = pdx*pdx + pdy*pdy;
+                      const minDist = COLLISION_RADIUS * 2;
+                      
+                      if (pDistSq < minDist * minDist && pDistSq > 0.0001) {
+                          const pDist = Math.sqrt(pDistSq);
+                          const overlap = minDist - pDist;
+                          const nx = pdx / pDist;
+                          const ny = pdy / pDist;
+
+                          // Apply impulse to separate
+                          const separation = overlap * 0.5;
+                          
+                          // Position Correction
+                          p1.pos.x += nx * separation;
+                          p1.pos.y += ny * separation;
+                          p2.pos.x -= nx * separation;
+                          p2.pos.y -= ny * separation;
+
+                          // Velocity damping (friction)
+                          const kFriction = 0.9;
+                          p1.oldPos.x = p1.pos.x - (p1.pos.x - p1.oldPos.x) * kFriction;
+                          p1.oldPos.y = p1.pos.y - (p1.pos.y - p1.oldPos.y) * kFriction;
+                          p2.oldPos.x = p2.pos.x - (p2.pos.x - p2.oldPos.x) * kFriction;
+                          p2.oldPos.y = p2.pos.y - (p2.pos.y - p2.oldPos.y) * kFriction;
+                      }
+                  }
+              }
+          }
+      }
   }
 
   private applySocialForces(botCount: number) {
@@ -338,7 +376,7 @@ export class PhysicsEngine {
       }
   }
 
-  // --- Decomposed Update Logic ---
+  // --- Decomposed Update Logic with Mind-Body Operators ---
 
   private updateBot(bot: Xenobot, time: number, dt: number, dtSq: number, fluidBaseFriction: number) {
     bot.energy -= METABOLIC_DECAY;
@@ -349,27 +387,46 @@ export class PhysicsEngine {
         return; 
     }
 
-    // Boundary Stress & Push-back
-    const distFromCenter = Math.abs(bot.centerOfMass.x);
-    if (distFromCenter > BOUNDARY_LIMIT) {
-        bot.energy -= 0.8; // High environmental stress
-        
-        const pushDir = -Math.sign(bot.centerOfMass.x);
-        const overlap = distFromCenter - BOUNDARY_LIMIT;
-        const pushForce = Math.min(2.0, overlap * 0.01);
-        
-        this.distributeForce(bot, pushDir * pushForce, 0);
-    }
+    // ARCHITECTURE PHASE A: Mental Causation (Irruption)
+    // The "Unobservable Mental Cause" (Genome/Phase) exerts "Irruption" into the material world via muscle forces.
+    const irruption = this.performIrruption(bot, time);
+    bot.irruption = irruption;
 
-    this.updateBotSensory(bot);
+    // PHYSICS PHASE: Material Event
+    // Calculate environmental forces (Fluid dynamics, cilia) and integrate positions
+    this.performMaterialPhysics(bot, time, dt, dtSq, fluidBaseFriction);
 
+    // ARCHITECTURE PHASE B: Conscious Experience (Absorption)
+    // The "Unintelligible Material Event" (Collisions, Stress) causes "Absorption" into the mental state (Energy, Memory).
+    const absorption = this.performAbsorption(bot);
+    bot.absorption = absorption;
+    
+    // Decay values for visualization
+    bot.irruption *= 0.8;
+    bot.absorption *= 0.8;
+  }
+
+  // Corresponds to "Mental Causation -> Irruption"
+  private performIrruption(bot: Xenobot, time: number): number {
+      // 1. Internal Structure Updates (Springs/Muscles)
+      // This function returns the total active charge generated by muscles/structure
+      const activeCharge = this.updateInternalStructure(bot, time);
+      bot.totalCharge = activeCharge;
+      
+      // Irruption is proportional to the active charge (effort) being exerted
+      return activeCharge;
+  }
+
+  // Corresponds to "Physics Integration"
+  private performMaterialPhysics(bot: Xenobot, time: number, dt: number, dtSq: number, fluidBaseFriction: number) {
     const particles = bot.particles;
     const pCount = particles.length;
 
     // Temporary buffers for cilia sync
     const ciliaForcesX = new Float32Array(pCount);
     const ciliaForcesY = new Float32Array(pCount);
-
+    
+    // Cilia Cohesion Calculation
     let avgVx = 0, avgVy = 0;
     for (let i = 0; i < pCount; i++) {
         avgVx += (particles[i].pos.x - particles[i].oldPos.x);
@@ -378,18 +435,16 @@ export class PhysicsEngine {
     avgVx /= (pCount || 1);
     avgVy /= (pCount || 1);
 
-    // 1. Calculate Particle Forces
+    // 1. Calculate Particle Forces (Gravity, Fluid, Cilia)
     for (let i = 0; i < pCount; i++) {
         const p = particles[i];
         
         // Structure cost
         bot.energy -= PARTICLE_MAINTENANCE_COST;
         
-        // Reset and Apply Gravity/Buoyancy/Environment
+        // Gravity / Buoyancy
         p.force.x = 0;
         p.force.y = this.config.gravity; 
-
-        // Buoyancy gradient
         const invGroundY = 1.0 / (this.groundY || 1);
         let depthRatio = Math.max(0, Math.min(1, p.pos.y * invGroundY));
         p.force.y -= this.config.gravity * (0.9 + depthRatio * 0.1);
@@ -406,7 +461,7 @@ export class PhysicsEngine {
         ciliaForcesX[i] = cx;
         ciliaForcesY[i] = cy;
 
-        // Surface Tension (Self Cohesion)
+        // Surface Tension
         const dxSelf = bot.centerOfMass.x - p.pos.x;
         const dySelf = bot.centerOfMass.y - p.pos.y;
         p.force.x += dxSelf * SURFACE_TENSION;
@@ -423,25 +478,47 @@ export class PhysicsEngine {
         particles[i].force.x += ciliaForcesX[i];
         particles[i].force.y += ciliaForcesY[i];
     }
-
-    // 3. Apply Internal Physics (Springs, Muscles, Viscous Coupling)
-    let activeCharge = this.updateInternalStructure(bot, time);
     
-    // Add stress charge if out of bounds
-    if (distFromCenter > BOUNDARY_LIMIT) {
-        activeCharge += 5.0; // Visual feedback of stress
-    }
-
-    bot.totalCharge = activeCharge;
-
-    // 4. Integrate
+    // 3. Integrate
     this.integrateParticles(bot, dtSq, fluidBaseFriction);
   }
 
-  private updateBotSensory(bot: Xenobot) {
+  // Corresponds to "Material Event -> Absorption -> Conscious Experience"
+  private performAbsorption(bot: Xenobot): number {
+    let absorptionEvent = 0;
+
+    // 1. Sensory Input (Navigational Absorption)
+    // The bot "senses" food and adjusts heading. This is information absorption.
+    const sensoryStrength = this.updateBotSensory(bot);
+    if (sensoryStrength > 0) absorptionEvent += sensoryStrength * 0.5;
+
+    // 2. Consumption (Energy Absorption)
+    // Physical contact with food results in energy gain.
+    const energyGained = this.checkFoodConsumption(bot);
+    if (energyGained > 0) absorptionEvent += 2.0; // High spike for eating
+
+    // 3. Environmental Stress (Pain Absorption)
+    // Hitting boundaries causes stress absorption.
+    const distFromCenter = Math.abs(bot.centerOfMass.x);
+    if (distFromCenter > BOUNDARY_LIMIT) {
+        bot.energy -= 0.8; // High environmental stress
+        
+        const pushDir = -Math.sign(bot.centerOfMass.x);
+        const overlap = distFromCenter - BOUNDARY_LIMIT;
+        const pushForce = Math.min(2.0, overlap * 0.01);
+        
+        this.distributeForce(bot, pushDir * pushForce, 0);
+        absorptionEvent += 1.0; // Stress spike
+    }
+
+    return absorptionEvent;
+  }
+
+  private updateBotSensory(bot: Xenobot): number {
     let targetHeading = bot.heading;
     let shortestDistSq = Infinity;
     const SENSOR_RADIUS_SQ = 600 * 600;
+    let sensation = 0;
     
     for (const f of this.food) {
         const dx = f.x - bot.centerOfMass.x;
@@ -450,6 +527,7 @@ export class PhysicsEngine {
         if (dSq < SENSOR_RADIUS_SQ && dSq < shortestDistSq) {
             shortestDistSq = dSq;
             targetHeading = Math.atan2(dy, dx);
+            sensation = 1.0 - (dSq / SENSOR_RADIUS_SQ);
         }
     }
     
@@ -462,6 +540,39 @@ export class PhysicsEngine {
     } else {
         bot.heading += (Math.random() - 0.5) * 0.1;
     }
+    return sensation;
+  }
+
+  private checkFoodConsumption(bot: Xenobot): number {
+      const com = bot.centerOfMass;
+      const botRadius = (bot.genome.gridSize * this.config.gridScale) / 1.5;
+      let energyGained = 0;
+
+      for (let i = this.food.length - 1; i >= 0; i--) {
+          const f = this.food[i];
+          const dx = com.x - f.x;
+          const dy = com.y - f.y;
+          const distSq = dx*dx + dy*dy;
+          
+          if (distSq < (botRadius + FOOD_RADIUS) ** 2) {
+               let eaten = false;
+               for (const p of bot.particles) {
+                   const pdx = p.pos.x - f.x;
+                   const pdy = p.pos.y - f.y;
+                   if (pdx*pdx + pdy*pdy < (FOOD_RADIUS + 10) ** 2) {
+                       eaten = true;
+                       break;
+                   }
+               }
+
+               if (eaten) {
+                   bot.energy += f.energy;
+                   energyGained += f.energy;
+                   this.food.splice(i, 1);
+               }
+          }
+      }
+      return energyGained;
   }
 
   private calculateCiliaForce(bot: Xenobot, p: Particle, time: number, avgVx: number, avgVy: number) {

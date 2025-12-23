@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { AnalysisResult } from '../types';
-import { X, Share2, Copy, Twitter, Facebook, Linkedin, Mail } from 'lucide-react';
+import { X, Share2, Copy, Twitter, Facebook, Linkedin, Mail, Zap, BrainCircuit } from 'lucide-react';
 
 interface AnalysisPanelProps {
   result: AnalysisResult | null;
@@ -112,6 +112,26 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ result, onClose })
       </div>
       
       <div className="space-y-4 font-mono text-sm h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+        
+        {/* New Mind-Body Section */}
+        <div className="bg-slate-900 p-3 rounded border border-slate-800">
+            <h3 className="text-xs uppercase tracking-wider mb-2 text-slate-400 flex items-center gap-2">
+                Mind-Body Coherence
+            </h3>
+            <div className="grid grid-cols-2 gap-2 text-center">
+                <div className="p-2 bg-slate-950 rounded border border-red-500/20">
+                    <div className="text-red-400 text-xs mb-1 flex justify-center"><Zap size={14}/></div>
+                    <div className="text-[10px] text-slate-500 uppercase">Mental Cause</div>
+                    <div className="text-neon-cyan font-bold">Irruption</div>
+                </div>
+                <div className="p-2 bg-slate-950 rounded border border-green-500/20">
+                    <div className="text-green-400 text-xs mb-1 flex justify-center"><BrainCircuit size={14}/></div>
+                    <div className="text-[10px] text-slate-500 uppercase">Conscious Exp.</div>
+                    <div className="text-neon-cyan font-bold">Absorption</div>
+                </div>
+            </div>
+        </div>
+
         <div>
           <h3 className="text-slate-400 text-xs uppercase tracking-wider mb-1">Structural Analysis</h3>
           <p className="leading-relaxed text-slate-300 border-l-2 border-slate-700 pl-3">

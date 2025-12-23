@@ -10,6 +10,8 @@ interface GenomeVisualizerProps {
   initialPosition?: { x: number, y: number };
   hidden?: boolean;
   onMinimize?: () => void;
+  embedded?: boolean;
+  spacing?: number;
 }
 
 export const GenomeVisualizer: React.FC<GenomeVisualizerProps> = ({ 
@@ -18,7 +20,9 @@ export const GenomeVisualizer: React.FC<GenomeVisualizerProps> = ({
   borderColor = "border-slate-700",
   initialPosition = { x: 100, y: 100 },
   hidden = false,
-  onMinimize
+  onMinimize,
+  embedded = false,
+  spacing = 50 // Increased spacing default
 }) => {
   const [position, setPosition] = useState(initialPosition);
   const [isDragging, setIsDragging] = useState(false);
@@ -26,6 +30,7 @@ export const GenomeVisualizer: React.FC<GenomeVisualizerProps> = ({
   
   // Drag Handlers
   const handleMouseDown = (e: React.MouseEvent) => {
+    if (embedded) return;
     setIsDragging(true);
     setDragOffset({
         x: e.clientX - position.x,
@@ -66,7 +71,6 @@ export const GenomeVisualizer: React.FC<GenomeVisualizerProps> = ({
     const nodes: {x: number, y: number, type: CellType, key: string}[] = [];
     const links: {x1: number, y1: number, x2: number, y2: number, key: string}[] = [];
     const gridSize = genome.gridSize;
-    const spacing = 24; // Distance between nodes in the visualizer
     
     // 1. Identify Nodes & Calculate Bounding Box for Centering
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -92,8 +96,8 @@ export const GenomeVisualizer: React.FC<GenomeVisualizerProps> = ({
     const contentWidth = maxX - minX;
     const contentHeight = maxY - minY;
     
-    // Center in a fixed container size (e.g. 200x200)
-    const CONTAINER_SIZE = 200;
+    // Center in a fixed container size based on content + padding
+    const CONTAINER_SIZE = Math.max(250, Math.max(contentWidth, contentHeight) + spacing * 2);
     const offsetX = (CONTAINER_SIZE - contentWidth) / 2 - minX;
     const offsetY = (CONTAINER_SIZE - contentHeight) / 2 - minY;
 
@@ -115,7 +119,6 @@ export const GenomeVisualizer: React.FC<GenomeVisualizerProps> = ({
     });
 
     // 3. Create Links (Structural Connections)
-    // Connect to Right, Down, Diagonal Right, Diagonal Left (structural neighbors)
     const directions = [[1,0], [0,1], [1,1], [-1,1]];
     
     tempNodes.forEach(n => {
@@ -138,41 +141,50 @@ export const GenomeVisualizer: React.FC<GenomeVisualizerProps> = ({
     });
 
     return { nodes, links, width: CONTAINER_SIZE, height: CONTAINER_SIZE };
-  }, [genome]);
+  }, [genome, spacing]);
 
-  // If hidden is true, we render nothing, effectively "minimizing" to the parent controller
   if (hidden || !genome) return null;
 
-  // EXPANDED VIEW
+  const containerClasses = embedded 
+      ? `w-full bg-slate-900/40 rounded border border-slate-700/50 p-2`
+      : `fixed w-[280px] bg-slate-900/90 border ${borderColor} rounded-lg p-3 backdrop-blur shadow-2xl z-20 transition-opacity duration-300 animate-in fade-in zoom-in-95 duration-200`;
+
+  const containerStyle = embedded ? {} : { left: position.x, top: position.y };
+
   return (
     <div 
-        className={`fixed w-[240px] bg-slate-900/90 border ${borderColor} rounded-lg p-3 backdrop-blur shadow-2xl z-20 transition-opacity duration-300 animate-in fade-in zoom-in-95 duration-200`}
-        style={{ left: position.x, top: position.y }}
+        className={containerClasses}
+        style={containerStyle}
     >
-      {/* Header / Drag Handle */}
-      <div 
-        className="flex items-center justify-between gap-2 mb-3 text-slate-300 border-b border-white/10 pb-2 cursor-move select-none"
-        onMouseDown={handleMouseDown}
-      >
-        <div className="flex items-center gap-2">
-            <GripHorizontal size={14} className="text-slate-500" />
-            <span className="font-display font-bold text-sm text-white">{label}</span>
-        </div>
-        <button 
-            onClick={() => {
-                onMinimize?.();
-            }}
-            className="text-slate-500 hover:text-white"
-            title="Minimize to Panel"
-        >
-            <Minus size={14} />
-        </button>
-      </div>
+      {/* Header / Drag Handle (Only if not embedded) */}
+      {!embedded && (
+          <div 
+            className="flex items-center justify-between gap-2 mb-3 text-slate-300 border-b border-white/10 pb-2 cursor-move select-none"
+            onMouseDown={handleMouseDown}
+          >
+            <div className="flex items-center gap-2">
+                <GripHorizontal size={14} className="text-slate-500" />
+                <span className="font-display font-bold text-sm text-white">{label}</span>
+            </div>
+            <button 
+                onClick={() => onMinimize?.()}
+                className="text-slate-500 hover:text-white"
+                title="Minimize to Panel"
+            >
+                <Minus size={14} />
+            </button>
+          </div>
+      )}
 
       {/* GRAPH RENDERER */}
       <div className="relative w-full aspect-square bg-slate-950/60 rounded border border-slate-800/50 flex items-center justify-center overflow-hidden pointer-events-none">
-         <svg width="200" height="200" viewBox="0 0 200 200" className="overflow-visible">
-            {/* Filters for Organic Glow */}
+         <svg 
+            width="100%" 
+            height="100%" 
+            viewBox={`0 0 ${graphData.width} ${graphData.height}`} 
+            className="overflow-visible"
+            preserveAspectRatio="xMidYMid meet"
+         >
             <defs>
                 <filter id="node-blur" x="-50%" y="-50%" width="200%" height="200%">
                     <feGaussianBlur stdDeviation="3" result="blur"/>
@@ -187,7 +199,7 @@ export const GenomeVisualizer: React.FC<GenomeVisualizerProps> = ({
                 </filter>
             </defs>
 
-            {/* Links (Structural Tissue) */}
+            {/* Links */}
             <g className="opacity-40">
                 {graphData.links.map(l => (
                     <line 
@@ -200,7 +212,7 @@ export const GenomeVisualizer: React.FC<GenomeVisualizerProps> = ({
                 ))}
             </g>
 
-            {/* Nodes (Cells) */}
+            {/* Nodes */}
             {graphData.nodes.map(n => {
                 let fill = genome.color;
                 if (n.type === CellType.HEART) fill = "#ef4444";
@@ -208,15 +220,13 @@ export const GenomeVisualizer: React.FC<GenomeVisualizerProps> = ({
                 
                 return (
                     <g key={n.key} filter="url(#glow-strong)">
-                        {/* Core Node */}
                         <circle 
-                            cx={n.x} cy={n.y} r="4"
+                            cx={n.x} cy={n.y} r="6"
                             fill={fill}
                             opacity="0.9"
                         />
-                        {/* Inner Highlight */}
                         <circle 
-                            cx={n.x} cy={n.y} r="2"
+                            cx={n.x} cy={n.y} r="3"
                             fill="white"
                             opacity="0.4"
                         />

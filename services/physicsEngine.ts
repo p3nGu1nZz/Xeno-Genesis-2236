@@ -369,29 +369,14 @@ export class PhysicsEngine {
           p2.force.y += (avgFy - p2.force.y) * coupling;
       }
 
-      // 3. Stronger Internal Damping / Velocity Influence
-      for (const s of springs) {
-          const p1 = particles[s.p1];
-          const p2 = particles[s.p2];
-          
-          const v1x = p1.pos.x - p1.oldPos.x;
-          const v1y = p1.pos.y - p1.oldPos.y;
-          const v2x = p2.pos.x - p2.oldPos.x;
-          const v2y = p2.pos.y - p2.oldPos.y;
+      // 3. Merged Damping & Spring Forces (Optimized)
+      // Tuning constants for stable, smooth motion
+      const dampingFactor = 100.0; // High damping for less vibration (was ~78)
+      const stiffnessFactor = 120.0; // Lower stiffness for "soft" body feel (was ~157)
+      
+      const chargeLimit = 60.0;
+      const decayFactor = METABOLIC_DECAY * 0.1;
 
-          const dvx = v2x - v1x;
-          const dvy = v2y - v1y;
-          
-          // Increased damping by 1.2x to prevent disintegration
-          const dampingCoeff = 65.61 * 1.2; 
-
-          p1.force.x += dvx * dampingCoeff;
-          p1.force.y += dvy * dampingCoeff;
-          p2.force.x -= dvx * dampingCoeff;
-          p2.force.y -= dvy * dampingCoeff;
-      }
-
-      // 4. Spring Forces & Muscle Contraction
       for (const s of springs) {
           const p1 = particles[s.p1];
           const p2 = particles[s.p2];
@@ -401,11 +386,30 @@ export class PhysicsEngine {
           const distSq = dx * dx + dy * dy;
 
           if (distSq < 0.0001) continue;
+
+          // --- Damping Logic ---
+          const v1x = p1.pos.x - p1.oldPos.x;
+          const v1y = p1.pos.y - p1.oldPos.y;
+          const v2x = p2.pos.x - p2.oldPos.x;
+          const v2y = p2.pos.y - p2.oldPos.y;
+
+          const dvx = v2x - v1x;
+          const dvy = v2y - v1y;
+          
+          const dampX = dvx * dampingFactor;
+          const dampY = dvy * dampingFactor;
+
+          p1.force.x += dampX;
+          p1.force.y += dampY;
+          p2.force.x -= dampX;
+          p2.force.y -= dampY;
+
+          // --- Spring Force Logic ---
           const dist = Math.sqrt(distSq);
 
           let targetLen = s.currentRestLength;
           if (s.isMuscle) {
-              bot.energy -= METABOLIC_DECAY * 0.1;
+              bot.energy -= decayFactor;
               const avgCharge = (p1.charge + p2.charge) * 0.5;
               const freqMod = 1.0 + avgCharge * 4.0; 
               const contraction = Math.sin(time * mSpeed * freqMod + (s.phaseOffset || 0));
@@ -414,16 +418,15 @@ export class PhysicsEngine {
 
           const diff = (dist - targetLen) / dist;
           
-          // Increased stiffness by 1.2x to maintain morphology
-          const forceVal = (s.stiffness * 131.22 * 1.2) * diff;
+          // Optimized Hooke's Law
+          const forceVal = (s.stiffness * stiffnessFactor) * diff;
 
           const stress = Math.abs(diff); 
-          const chargeGen = stress * 4.0; 
+          const chargeGen = stress * 10.0; 
           
           if (chargeGen > 0.005) {
-              // Increased max capacity to 10.0 to allow for extremely high-intensity fields
-              p1.charge = Math.min(10.0, p1.charge + chargeGen);
-              p2.charge = Math.min(10.0, p2.charge + chargeGen);
+              p1.charge = Math.min(chargeLimit, p1.charge + chargeGen);
+              p2.charge = Math.min(chargeLimit, p2.charge + chargeGen);
           }
           activeCharge += (p1.charge + p2.charge);
 
@@ -431,9 +434,8 @@ export class PhysicsEngine {
           if (stress > 0.10 && stress < 0.6) {
              const change = (dist - s.currentRestLength) * (plasticity * (0.2 + memory));
              const newLength = s.currentRestLength + change;
-             const maxLen = s.restLength * 1.5;
-             const minLen = s.restLength * 0.5;
-             if (newLength > minLen && newLength < maxLen) {
+             // Clamp limits
+             if (newLength > s.restLength * 0.5 && newLength < s.restLength * 1.5) {
                  s.currentRestLength = newLength;
              }
           } else {
@@ -505,7 +507,8 @@ export class PhysicsEngine {
         
         // Bioelectric charge increases local viscosity (simulating mucus/secretion)
         // Significantly boosted physical impact of high charge for visual effect
-        const viscosityMod = 1.0 + (p.charge * 15.0);
+        // Adjusted from 15.0 to 10.0 to balance with higher charge capacity
+        const viscosityMod = 1.0 + (p.charge * 10.0);
         
         // Apply structural modifier
         const dragFactor = BASE_DRAG * viscosityMod * structuralDragMod;
@@ -533,8 +536,8 @@ export class PhysicsEngine {
         p.force.x += dxSelf * dynamicTension;
         p.force.y += dySelf * dynamicTension;
 
-        // Apply decay. Extremely slow for persistent trails.
-        p.charge *= 0.9999;
+        // Apply decay. Slower decay (0.99998) for persistent, glowing trails.
+        p.charge *= 0.99998;
     }
 
     // Apply Cilia Forces
@@ -545,14 +548,14 @@ export class PhysicsEngine {
     
     // Integrate (Verlet)
     let cx = 0, cy = 0;
-    const friction = this.config.friction;
+    const velocityDamping = this.config.friction / 1.05; // Optimized constant
 
     for (const p of particles) {
         p.force.x = Math.max(-MAX_FORCE, Math.min(MAX_FORCE, p.force.x));
         p.force.y = Math.max(-MAX_FORCE, Math.min(MAX_FORCE, p.force.y));
 
-        let vx = (p.pos.x - p.oldPos.x) * (friction / 1.05);
-        let vy = (p.pos.y - p.oldPos.y) * (friction / 1.05);
+        let vx = (p.pos.x - p.oldPos.x) * velocityDamping;
+        let vy = (p.pos.y - p.oldPos.y) * velocityDamping;
 
         vx = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, vx));
         vy = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, vy));
@@ -749,23 +752,42 @@ export class PhysicsEngine {
   }
 
   public smoothRenderPositions() {
-      // Robust Linear Interpolation (Lerp)
-      // Damped spring method was unstable; this provides reliable smoothing.
-      const alpha = 0.25; 
+      // Damped Spring Smoothing System
+      // Provides organic, fluid motion visualization without rigid jitter
+      // Updated constants: Lower tension for lazier follow, higher damping to kill vibration
+      const tension = 0.15;   // Spring stiffness (catch-up speed)
+      const damping = 0.90;   // Friction (prevents oscillation)
 
       this.bots.forEach(b => {
           b.particles.forEach(p => {
+              // Ensure renderVel exists (backwards compatibility or safety)
+              if (!p.renderVel) p.renderVel = { x: 0, y: 0 };
+
               const dx = p.pos.x - p.renderPos.x;
               const dy = p.pos.y - p.renderPos.y;
               const distSq = dx*dx + dy*dy;
 
-              // Teleport if too far (e.g. wrap around or respawn) to prevent "streaking"
+              // Teleport threshold to prevent streaking artifacts on respawn/wrap
               if (distSq > 4000) {
                   p.renderPos.x = p.pos.x;
                   p.renderPos.y = p.pos.y;
+                  p.renderVel.x = 0;
+                  p.renderVel.y = 0;
               } else {
-                  p.renderPos.x += dx * alpha;
-                  p.renderPos.y += dy * alpha;
+                  // Hooke's Law with Damping: F = -kx - cv
+                  // Here implemented iteratively
+                  
+                  // Acceleration towards target
+                  const ax = dx * tension;
+                  const ay = dy * tension;
+
+                  // Update Velocity with Damping
+                  p.renderVel.x = (p.renderVel.x + ax) * damping;
+                  p.renderVel.y = (p.renderVel.y + ay) * damping;
+
+                  // Update Position
+                  p.renderPos.x += p.renderVel.x;
+                  p.renderPos.y += p.renderVel.y;
               }
           });
       });

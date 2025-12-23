@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useLayoutEffect } from 'react';
 import { Xenobot, CameraState, Food } from '../types';
 import { COLORS, FOOD_RADIUS } from '../constants';
 
-const MAX_PARTICLES = 128; 
+const MAX_PARTICLES = 256; 
 
 const VS_SOURCE = `
   attribute vec2 position;
@@ -56,7 +56,7 @@ const FS_SOURCE = `
     // Scale field physics with zoom
     float zoomScale = max(0.1, u_zoom);
     // Tighter base radius for a concise, localized field effect
-    float radiusBase = 15.0 * zoomScale; 
+    float radiusBase = 12.0 * zoomScale; 
     float radiusSq = radiusBase * radiusBase;
     
     float field = 0.0;
@@ -90,7 +90,8 @@ const FS_SOURCE = `
     // Steady Distortion (Subtle heat haze, very slow)
     float distortNoise = noise(worldUV * 0.01 + vec2(u_time * 0.02)); 
     // Intensity heavily scaled by field strength
-    vec2 distortedUV = worldUV + vec2(distortNoise) * field * 10.0; 
+    // Increased distortion scaling for enhanced visual effect
+    vec2 distortedUV = worldUV + vec2(distortNoise) * field * 50.0; 
 
     // Electric arcs / filaments on distorted UVs - Slower animation
     float n = fbm(distortedUV * 0.01 + vec2(0.0, u_time * 0.05));
@@ -109,7 +110,7 @@ const FS_SOURCE = `
        vec3 cElec = vec3(0.8, 0.9, 1.0);
 
        float alpha = smoothstep(0.05, 0.25, flow);
-       alpha = clamp(alpha, 0.0, 0.65); 
+       alpha = clamp(alpha, 0.0, 0.92); // Increased max opacity for brighter fields
 
        vec3 rgb = baseColor * flow * 1.5;
        
@@ -313,6 +314,32 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
             ctx.arc(p.x, p.y, 5 + progress * 30, 0, Math.PI * 2);
             ctx.fillStyle = `rgba(255, 255, 255, ${1.0 - progress})`;
             ctx.fill();
+        }
+
+        // Critical Energy Warning (Pulsating Aura)
+        if (bot.energy < 1000) {
+            const criticality = 1.0 - Math.max(0, bot.energy / 1000); // 0 to 1 scaling based on energy loss
+            const time = Date.now() * 0.005; // Slow pulse
+            const pulse = 0.5 + 0.5 * Math.sin(time + (bot.id.charCodeAt(0) || 0)); // Offset phase by ID
+            
+            // Inner failing glow
+            ctx.beginPath();
+            ctx.arc(bot.centerOfMass.x, bot.centerOfMass.y, 30 + pulse * 15, 0, Math.PI * 2);
+            // Fade from transparent to dim red/grey
+            const alpha = Math.min(0.2, criticality * 0.25 * pulse);
+            ctx.fillStyle = `rgba(255, 80, 80, ${alpha})`;
+            ctx.fill();
+
+            // Critical structure warning ring
+            if (bot.energy < 400) {
+                ctx.beginPath();
+                ctx.arc(bot.centerOfMass.x, bot.centerOfMass.y, 45 - pulse * 10, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(255, 0, 0, ${criticality * 0.3})`;
+                ctx.lineWidth = 1;
+                ctx.setLineDash([2, 8]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
         }
 
         // Visualizing Absorption (Conscious Experience)

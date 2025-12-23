@@ -360,8 +360,9 @@ const App: React.FC = () => {
              const targetCamY = targetBot.centerOfMass.y;
              
              // Damped Spring Physics (Replacing Lerp for organic feel)
-             const springK = 0.05; // Stiffness (Tension)
-             const springD = 0.85; // Damping (Friction)
+             // Refined constants to match organic particle smoothing
+             const springK = 0.08; // Increased Stiffness (Tension) from 0.05
+             const springD = 0.80; // Decreased Damping (Friction) from 0.85
 
              // 1. Calculate Acceleration (Hooke's Law: F = -kx)
              const ax = (targetCamX - camera.x) * springK;

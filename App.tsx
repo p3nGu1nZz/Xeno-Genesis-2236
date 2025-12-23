@@ -126,9 +126,10 @@ const App: React.FC = () => {
            const match = g.color.match(/hsl\((\d+\.?\d*)/);
            const hue = match ? parseFloat(match[1]) : 0;
            const isGroupA = (hue > 150 && hue < 230);
-           // Group A starts at 0, Group B starts further out
-           startX = isGroupA ? 0 : 1200; 
-           startX += (Math.random() - 0.5) * 150; 
+           
+           // Centered Spawn: Group A at -400, Group B at +400 for balanced colony start
+           startX = isGroupA ? -400 : 400; 
+           startX += (Math.random() - 0.5) * 100; // Reduced spread
            g.originX = startX;
         }
         return engine.createBot(g, startX, 200 + Math.random() * 100);
@@ -267,6 +268,8 @@ const App: React.FC = () => {
 
           if (totalTickRef.current % 30 === 0) {
              updateGenomeGroups();
+             // Sync population ref for Save/Load functionality to include new children
+             populationRef.current = engine.bots.filter(b => !b.isDead).map(b => b.genome);
           }
       }
 

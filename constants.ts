@@ -1,8 +1,8 @@
 
 import { SimulationConfig } from './types';
 
-export const INITIAL_POPULATION_SIZE = 10; 
-export const MAX_POPULATION_CAP = 1000; 
+export const INITIAL_POPULATION_SIZE = 2; 
+export const MAX_POPULATION_CAP = 10000; 
 export const GRID_SIZE = 6; 
 export const EVOLUTION_INTERVAL = 3600; // 60 seconds at 60fps
 export const DEFAULT_FOOD_COUNT = 500; // Increased from 50 to 500

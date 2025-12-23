@@ -27,7 +27,31 @@ export class PhysicsEngine {
   initFood() {
     this.food = [];
     const count = this.config.foodCount;
-    for (let i = 0; i < count; i++) {
+    
+    // Guaranteed Starter Food near spawn points
+    // Cluster A (-400)
+    for(let i=0; i<20; i++) {
+        this.food.push({
+            id: uid(),
+            x: -400 + (Math.random() - 0.5) * 300,
+            y: 200 + (Math.random() - 0.5) * 300,
+            energy: FOOD_ENERGY,
+            phase: Math.random() * Math.PI * 2
+        });
+    }
+    // Cluster B (+400)
+    for(let i=0; i<20; i++) {
+        this.food.push({
+            id: uid(),
+            x: 400 + (Math.random() - 0.5) * 300,
+            y: 200 + (Math.random() - 0.5) * 300,
+            energy: FOOD_ENERGY,
+            phase: Math.random() * Math.PI * 2
+        });
+    }
+
+    // Remaining food random
+    for (let i = 40; i < count; i++) {
         this.spawnFood();
     }
   }
@@ -661,10 +685,10 @@ export class PhysicsEngine {
       const GROUP_FORCE = 6.0; 
       
       const SELF_REPULSION_RADIUS = 200; 
-      // Increased Cohesion Radius for better group retention
-      const COHESION_RADIUS = 2800; 
-      // Increased Attraction Strength to reinforce colony integrity
-      const ATTRACTION_STRENGTH = 0.85; 
+      // Increased Cohesion Radius to 3000 as requested
+      const COHESION_RADIUS = 3000; 
+      // Increased Attraction Strength to 0.9 as requested
+      const ATTRACTION_STRENGTH = 0.9; 
       const REPULSION_STRENGTH = 1.5; 
 
       for (let i = 0; i < botCount; i++) {
@@ -1106,8 +1130,8 @@ export class PhysicsEngine {
           const dvy = v2y - v1y;
           
           // COHESION: Apply full vector damping to enforce rigid body motion
-          // UPDATED: Increased to 11.25 (1.5x of 7.5) for even tighter organismal movement
-          const dampingCoeff = 11.25; 
+          // UPDATED: Increased to 20.25 (1.5x of 13.5) for maximal organismal integrity
+          const dampingCoeff = 20.25; 
 
           p1.force.x += dvx * dampingCoeff;
           p1.force.y += dvy * dampingCoeff;
@@ -1136,8 +1160,8 @@ export class PhysicsEngine {
           }
 
           const diff = (dist - targetLen) / dist;
-          // UPDATED: Multiplied stiffness by 22.5 (1.5x of 15.0) to enforce rigidity and prevent breaking
-          const forceVal = (s.stiffness * 22.5) * diff;
+          // UPDATED: Multiplied stiffness by 40.5 (1.5x of 27.0) to enforce rigidity and prevent breaking
+          const forceVal = (s.stiffness * 40.5) * diff;
 
           const stress = Math.abs(diff); 
           const chargeGen = stress * 0.6;

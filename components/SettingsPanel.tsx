@@ -85,34 +85,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
           <div className="space-y-3">
              <label className="text-xs uppercase text-slate-500 font-bold tracking-wider">Colony Parameters</label>
              
-             <div className="space-y-1">
-                <div className="flex justify-between">
-                    <span>Initial Population Size</span>
-                    <span className="text-neon-cyan">{localConfig.populationSize}</span>
-                </div>
-                <input 
-                    type="range" min="4" max="40" step="2"
-                    value={localConfig.populationSize}
-                    onChange={(e) => handleChange('populationSize', parseInt(e.target.value))}
-                    className="w-full accent-neon-cyan h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer"
-                />
-             </div>
-
-             <div className="space-y-1">
-                <div className="flex justify-between">
-                    <span>Max Population Cap</span>
-                    <span className="text-neon-cyan">{localConfig.maxPopulationSize || 100}</span>
-                </div>
-                <input 
-                    type="range" min="20" max="500" step="10"
-                    value={localConfig.maxPopulationSize || 100}
-                    onChange={(e) => handleChange('maxPopulationSize', parseInt(e.target.value))}
-                    className="w-full accent-neon-cyan h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer"
-                />
-                <div className="text-[10px] text-slate-500">
-                    Determines maximum growth limit via reproduction. High values affect performance.
-                </div>
-             </div>
+             {/* Population inputs removed - hardcoded to start at 2 and cap at 10,000 */}
 
              <div className="space-y-1">
                 <div className="flex justify-between">

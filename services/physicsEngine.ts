@@ -28,7 +28,7 @@ import { evolvePopulation, mutate } from './geneticAlgorithm';
 const uid = () => Math.random().toString(36).substr(2, 9);
 const MAX_FORCE = 15.0;
 const MAX_VELOCITY = 20.0;
-const PARTICLE_MAINTENANCE_COST = 0.1; // Increased to 0.1 to make large bodies expensive
+const PARTICLE_MAINTENANCE_COST = 0.005; // Reduced from 0.1 to 0.005 to prevent rapid death
 const COLLISION_RADIUS = 12; 
 
 export class PhysicsEngine {

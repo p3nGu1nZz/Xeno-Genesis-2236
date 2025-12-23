@@ -35,7 +35,6 @@ for (let y = 0; y < GRID_SIZE; y++) {
 
 export function createRandomGenome(generation: number = 0, targetHue?: number): Genome {
   // 20% Chance to spawn a "Prophet" bot that adheres to the Nervous Ring topology
-  // This helps seed the population with the desired trait if extinction occurs.
   if (Math.random() < 0.2) {
       return createNervousRingGenome(generation, targetHue);
   }
@@ -73,7 +72,9 @@ export function createRandomGenome(generation: number = 0, targetHue?: number): 
     fitness: 0,
     generation,
     color,
-    bioelectricMemory: Math.random()
+    bioelectricMemory: Math.random(),
+    originX: 0, // Default 
+    originY: 200 // Default Y area
   };
 }
 
@@ -102,8 +103,77 @@ function createNervousRingGenome(generation: number, targetHue?: number): Genome
         fitness: 0,
         generation,
         color: `hsl(${h.toFixed(0)}, 80%, 50%)`, // Slightly brighter to indicate special status
-        bioelectricMemory: 0.8 // High plasticity to adapt quickly
+        bioelectricMemory: 0.8, // High plasticity to adapt quickly
+        originX: 0,
+        originY: 200
     };
+}
+
+// Shrinks a genome to a small fraction of its size (1/10th intent), keeping connected components
+export function pruneGenome(genome: Genome, retentionRate: number = 0.15): Genome {
+    const newGenes = genome.genes.map(row => [...row]);
+    const activeCells: {x: number, y: number}[] = [];
+
+    // Find all active cells
+    for(let y=0; y<genome.gridSize; y++) {
+        for(let x=0; x<genome.gridSize; x++) {
+            if (newGenes[y][x] !== CellType.EMPTY) {
+                activeCells.push({x, y});
+            }
+        }
+    }
+
+    if (activeCells.length <= 3) return genome; // Already small
+
+    // Target size (Minimum 3 to allow movement physics)
+    const targetSize = Math.max(3, Math.floor(activeCells.length * retentionRate));
+
+    // Pick a random seed cell to keep
+    const seedIndex = Math.floor(Math.random() * activeCells.length);
+    const seed = activeCells[seedIndex];
+    
+    // BFS to find connected neighbors to keep
+    const toKeep = new Set<string>();
+    const queue = [seed];
+    const visited = new Set<string>();
+    visited.add(`${seed.x},${seed.y}`);
+    toKeep.add(`${seed.x},${seed.y}`);
+
+    while (queue.length > 0 && toKeep.size < targetSize) {
+        const curr = queue.shift()!;
+        
+        // Neighbors
+        const neighbors = [
+            {x: curr.x+1, y: curr.y}, {x: curr.x-1, y: curr.y},
+            {x: curr.x, y: curr.y+1}, {x: curr.x, y: curr.y-1}
+        ];
+
+        for (const n of neighbors) {
+            if (n.x >= 0 && n.x < genome.gridSize && n.y >= 0 && n.y < genome.gridSize) {
+                if (newGenes[n.y][n.x] !== CellType.EMPTY) {
+                    const key = `${n.x},${n.y}`;
+                    if (!visited.has(key)) {
+                        visited.add(key);
+                        toKeep.add(key);
+                        queue.push(n);
+                        if (toKeep.size >= targetSize) break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Clear everything not in toKeep
+    for(let y=0; y<genome.gridSize; y++) {
+        for(let x=0; x<genome.gridSize; x++) {
+            const key = `${x},${y}`;
+            if (!toKeep.has(key)) {
+                newGenes[y][x] = CellType.EMPTY;
+            }
+        }
+    }
+
+    return { ...genome, genes: newGenes };
 }
 
 function crossover(parentA: Genome, parentB: Genome, generation: number): Genome {
@@ -120,19 +190,32 @@ function crossover(parentA: Genome, parentB: Genome, generation: number): Genome
 
   const color = Math.random() > 0.5 ? parentA.color : parentB.color;
 
-  const posA = parentA.originX ?? 0;
-  const posB = parentB.originX ?? 0;
+  const posXA = parentA.originX ?? 0;
+  const posXB = parentB.originX ?? 0;
+  const posYA = parentA.originY ?? 0;
+  const posYB = parentB.originY ?? 0;
   
-  const dist = Math.abs(posA - posB);
-  let originX = posA;
+  // Calculate spatial midpoint for offspring to maintain fluidity
+  const dist = Math.sqrt(Math.pow(posXA - posXB, 2) + Math.pow(posYA - posYB, 2));
+  
+  let originX = posXA;
+  let originY = posYA;
   
   if (dist < 300) {
-      originX = (posA + posB) / 2;
+      originX = (posXA + posXB) / 2;
+      originY = (posYA + posYB) / 2;
   } else {
-      originX = (color === parentA.color) ? posA : posB;
+      // Too far apart, stick to parent with matching color/species or random
+      if (color === parentA.color) {
+          originX = posXA;
+          originY = posYA;
+      } else {
+          originX = posXB;
+          originY = posYB;
+      }
   }
 
-  return {
+  const child = {
     id: Math.random().toString(36).substr(2, 9),
     gridSize: size,
     genes: newGenes,
@@ -140,8 +223,12 @@ function crossover(parentA: Genome, parentB: Genome, generation: number): Genome
     generation,
     color,
     bioelectricMemory: (parentA.bioelectricMemory + parentB.bioelectricMemory) / 2,
-    originX
+    originX,
+    originY
   };
+
+  // Offspring starts as a small "seed" (1/10th size roughly)
+  return pruneGenome(child, 0.15);
 }
 
 export function mutate(genome: Genome): Genome {
@@ -165,7 +252,7 @@ export function mutate(genome: Genome): Genome {
 
   // 2. Platonic Pull (The bias towards Nervous Ring)
   // Small chance for any cell to spontaneously align with the Platonic Ideal
-  if (Math.random() < 0.4) { // 40% chance that a mutation event includes a platonic shift
+  if (Math.random() < 0.4) { 
       const x = Math.floor(Math.random() * genome.gridSize);
       const y = Math.floor(Math.random() * genome.gridSize);
       const idealType = PLATONIC_IDEAL_MAP[`${x},${y}`];
@@ -202,7 +289,9 @@ export function mutate(genome: Genome): Genome {
     id: Math.random().toString(36).substr(2, 9), // Ensure mutated clones have unique IDs
     genes: newGenes,
     bioelectricMemory: newMemory,
-    color: mutated ? adjustColor(genome.color) : genome.color
+    color: mutated ? adjustColor(genome.color) : genome.color,
+    originX: genome.originX,
+    originY: genome.originY
   };
 }
 
@@ -228,34 +317,32 @@ export function evolvePopulation(population: Genome[], generation: number, maxPo
 
   const maxPerGroup = Math.floor(maxPopulationSize / 2);
   
+  // Reduced growth logic: Only 10% chance for new offspring per evolution step
   const evolveSubPool = (pool: Genome[], currentMax: number): Genome[] => {
       if (pool.length === 0) return [];
       
       const sorted = [...pool].sort((a, b) => b.fitness - a.fitness);
       
-      // Variable growth
-      const growthMultiplier = 1.0 + Math.random() * 0.8;
-      const rngBonus = Math.floor(Math.random() * 4);
+      // Calculate target new births (10% of current size)
+      const growthTarget = Math.max(1, Math.floor(pool.length * 0.10));
       
-      let newSize = Math.floor(pool.length * growthMultiplier) + rngBonus;
+      // Cap at config limit
+      const limit = Math.min(currentMax, pool.length + growthTarget);
       
-      if (newSize <= pool.length && pool.length < currentMax) {
-          newSize = pool.length + 1;
-      }
-
-      if (newSize < 4) newSize = 4;
-      if (newSize > currentMax) newSize = currentMax;
+      // Keep all survivors (elitism + existing)
+      const nextGen = [...sorted];
       
-      const nextGen = [sorted[0]];
-      if (sorted.length > 1) nextGen.push(sorted[1]);
-      
-      while (nextGen.length < newSize) {
+      // Add new children up to the 10% growth limit
+      let attempts = 0;
+      while (nextGen.length < limit && attempts < 100) {
           const p1 = tournamentSelect(sorted);
           const p2 = tournamentSelect(sorted);
           let child = crossover(p1, p2, generation + 1);
           child = mutate(child);
           nextGen.push(child);
+          attempts++;
       }
+      
       return nextGen;
   };
 

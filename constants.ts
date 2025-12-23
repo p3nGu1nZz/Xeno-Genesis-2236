@@ -5,7 +5,7 @@ export const INITIAL_POPULATION_SIZE = 2;
 export const MAX_POPULATION_CAP = 10000; 
 export const GRID_SIZE = 6; 
 export const EVOLUTION_INTERVAL = 3600; // 60 seconds at 60fps
-export const DEFAULT_FOOD_COUNT = 500; // Increased from 50 to 500
+export const DEFAULT_FOOD_COUNT = 500; // High food count for foraging density
 
 export const DEFAULT_CONFIG: SimulationConfig = {
   populationSize: INITIAL_POPULATION_SIZE,
@@ -38,10 +38,10 @@ export const CONSTRAINT_ITERATIONS = 8;
 
 // Biological Constants based on papers
 export const CILIA_FORCE = 0.6; // Slight boost
-export const METABOLIC_DECAY = 0.01; // Significantly reduced from 0.2 to 0.01 for longevity
-export const INITIAL_YOLK_ENERGY = 5000; // Increased from 800 to 5000 for longer lifespan
-export const MITOSIS_THRESHOLD = 3500; // Lowered from 25000 to allow reproduction
+export const METABOLIC_DECAY = 0.01; // Significantly reduced for longevity
+export const INITIAL_YOLK_ENERGY = 3000; // Starting energy
+export const MITOSIS_THRESHOLD = 8000; // Increased from 6500 to 8000 to further curb reproduction
 export const SURFACE_TENSION = 0.005; 
-export const FOOD_ENERGY = 600; // Increased from 250 to make feeding meaningful
+export const FOOD_ENERGY = 500; // Slight reduction to require more foraging
 export const FOOD_RADIUS = 15;
-export const BREAKING_THRESHOLD = 150.0; // Tripled to effectively disable accidental breaking
+export const BREAKING_THRESHOLD = 150.0; // effectively disable accidental breaking

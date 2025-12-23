@@ -23,7 +23,7 @@ import {
   SURFACE_TENSION,
   BREAKING_THRESHOLD
 } from '../constants';
-import { evolvePopulation, mutate } from './geneticAlgorithm';
+import { evolvePopulation, mutate, pruneGenome } from './geneticAlgorithm';
 
 const uid = () => Math.random().toString(36).substr(2, 9);
 const MAX_FORCE = 15.0;
@@ -120,7 +120,8 @@ export class PhysicsEngine {
                     
                     let stiffness = 2.0;
                     if (type1 === CellType.NEURON && type2 === CellType.NEURON) {
-                        stiffness = 5.0 + (Math.random() * 3.0 - 1.5); // Increased variability for organic structure
+                        // High stiffness with organic variability
+                        stiffness = 5.0 + (Math.random() * 2.0 - 1.0); 
                     } else if (isNeuron) {
                         stiffness = 3.5;
                     } else if (isMuscle) {
@@ -184,6 +185,7 @@ export class PhysicsEngine {
 
     // 2. Individual Bot Updates
     const newBots: Xenobot[] = [];
+    const maxBots = this.config.maxPopulationSize;
 
     for (let i = 0; i < botCount; i++) {
         const bot = this.bots[i];
@@ -217,7 +219,16 @@ export class PhysicsEngine {
         bot.absorption = Math.min(1.0, sensoryInput + (energyGained > 0 ? 0.5 : 0));
 
         // Mitosis Check
-        if (bot.energy > MITOSIS_THRESHOLD) {
+        // Only allow if:
+        // 1. Energy threshold met (Strict 8000)
+        // 2. Bot is mature (age > 800 ticks, approx 13s)
+        // 3. Population cap not reached
+        // 4. Extremely small probability (0.00015 = 0.015% per tick) to stagger bursts significantly
+        //    Previous was 0.001 (0.1%), so this is ~6.6x slower, plus higher energy threshold ~8x effective reduction.
+        if (bot.energy > MITOSIS_THRESHOLD && 
+            bot.age > 800 && 
+            (botCount + newBots.length) < maxBots &&
+            Math.random() < 0.00015) {
              const child = this.performMitosis(bot);
              if (child) newBots.push(child);
         }
@@ -241,13 +252,16 @@ export class PhysicsEngine {
       bot.energy /= 2;
       this.events.push('MITOSIS');
       
-      const childGenome = mutate(bot.genome);
+      let childGenome = mutate(bot.genome);
+      // Child starts as a small "seed" (1/10th size roughly, minimum 3 nodes)
+      childGenome = pruneGenome(childGenome, 0.15);
+
       const offset = 60;
       const child = this.createBot(childGenome, bot.centerOfMass.x + offset, bot.centerOfMass.y + offset);
       
       // Keep group ID for colony cohesion
       child.groupId = bot.groupId;
-      child.energy = bot.energy;
+      child.energy = bot.energy; // Inherits half energy
       
       return child;
   }
@@ -681,6 +695,11 @@ export class PhysicsEngine {
       const currentPop = this.bots.filter(b => !b.isDead).map(b => {
           b.genome.fitness = (b.centerOfMass.x - b.startPosition.x);
           b.genome.fitness += b.energy * 0.1;
+          
+          // CAPTURE CURRENT POSITION FOR NEXT GEN
+          b.genome.originX = b.centerOfMass.x;
+          b.genome.originY = b.centerOfMass.y;
+          
           return b.genome;
       });
 
@@ -690,10 +709,26 @@ export class PhysicsEngine {
       
       this.bots = nextGenGenomes.map(g => {
          let startX = 0;
-         if (typeof g.originX === 'number') startX = g.originX;
-         else startX = (Math.random() - 0.5) * 400;
+         let startY = 200; // Default
+
+         if (typeof g.originX === 'number' && typeof g.originY === 'number') {
+             // Use parent-derived position
+             startX = g.originX;
+             startY = g.originY;
+             // Add jitter to avoid perfect overlap
+             startX += (Math.random() - 0.5) * 20;
+             startY += (Math.random() - 0.5) * 20;
+         } else if (typeof g.originX === 'number') {
+             // Fallback if only X
+             startX = g.originX;
+             startY = 200 + Math.random() * 200;
+         } else {
+             // Fallback default
+             startX = (Math.random() - 0.5) * 400;
+             startY = 200 + Math.random() * 200;
+         }
          
-         return this.createBot(g, startX, 200 + Math.random() * 200);
+         return this.createBot(g, startX, startY);
       });
 
       return true;

@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { analyzeXenobot } from './services/geminiService';
 import { SimulationCanvas } from './components/SimulationCanvas';
@@ -126,6 +127,8 @@ const App: React.FC = () => {
     // Create Bots with Position Logic
     engine.bots = pop.map((g, i) => {
         let startX = 0;
+        let startY = 200 + Math.random() * 100;
+
         if (typeof g.originX === 'number' && !isNaN(g.originX)) {
              startX = g.originX + (Math.random() - 0.5) * 50; 
         } else {
@@ -133,12 +136,18 @@ const App: React.FC = () => {
            const hue = match ? parseFloat(match[1]) : 0;
            const isGroupA = (hue > 150 && hue < 230);
            
-           // Centered Spawn: Group A at -400, Group B at +400 for balanced colony start
-           startX = isGroupA ? -400 : 400; 
+           // Centered Spawn: Group A at -1200, Group B at +1200 for immense separation
+           startX = isGroupA ? -1200 : 1200; 
            startX += (Math.random() - 0.5) * 100; // Reduced spread
            g.originX = startX;
         }
-        return engine.createBot(g, startX, 200 + Math.random() * 100);
+        
+        // Use originY if available for vertical positioning
+        if (typeof g.originY === 'number' && !isNaN(g.originY)) {
+            startY = g.originY + (Math.random() - 0.5) * 50;
+        }
+
+        return engine.createBot(g, startX, startY);
     });
 
     engineRef.current = engine;

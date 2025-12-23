@@ -47,6 +47,7 @@ export interface Genome {
   color: string; 
   bioelectricMemory: number;
   originX?: number; 
+  originY?: number;
 }
 
 export interface Xenobot {

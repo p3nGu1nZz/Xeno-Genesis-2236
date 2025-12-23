@@ -77,7 +77,7 @@ const initSimulation = (config: SimulationConfig, startPop?: Genome[], startGen?
        const hue = match ? parseFloat(match[1]) : 0;
        const isGroupA = (hue > 150 && hue < 230);
        
-       startX = isGroupA ? -400 : 400; 
+       startX = isGroupA ? -1200 : 1200; 
        startX += (Math.random() - 0.5) * 150; 
        g.originX = startX;
     }

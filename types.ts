@@ -21,6 +21,7 @@ export interface Particle {
   pos: Point;
   oldPos: Point;
   renderPos: Point; 
+  renderVel?: Point; // Velocity for visual smoothing
   mass: number;
   force: Point;
   charge: number; 

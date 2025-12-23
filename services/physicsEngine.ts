@@ -87,6 +87,7 @@ export class PhysicsEngine {
              pos: { x: px, y: py },
              oldPos: { x: px, y: py },
              renderPos: { x: px, y: py },
+             renderVel: { x: 0, y: 0 },
              mass,
              force: { x: 0, y: 0 },
              charge: 0,
@@ -385,10 +386,12 @@ export class PhysicsEngine {
           const forceVal = (s.stiffness * 131.22 * 1.2) * diff;
 
           const stress = Math.abs(diff); 
-          const chargeGen = stress * 0.6;
+          const chargeGen = stress * 0.9; // Increased from 0.6 for more intense field generation
+          
           if (chargeGen > 0.01) {
-              p1.charge = Math.min(1, p1.charge + chargeGen);
-              p2.charge = Math.min(1, p2.charge + chargeGen);
+              // Allowed to go over 1.0 slightly to drive bloom/distortion effects
+              p1.charge = Math.min(1.5, p1.charge + chargeGen);
+              p2.charge = Math.min(1.5, p2.charge + chargeGen);
           }
           activeCharge += (p1.charge + p2.charge);
 
@@ -439,8 +442,6 @@ export class PhysicsEngine {
     const BASE_DRAG = 0.15;
     
     // Calculate connectivity ratio to determine structural drag
-    // Ideally, a fully connected node has 4-8 springs. In this simulation model, 
-    // a connectivity ratio > 3.0 indicates a dense, well-connected lattice.
     const connectivityRatio = bot.springs.length / (pCount || 1);
     const isWellConnected = connectivityRatio > 3.0; // > 75% of max connections
     
@@ -471,7 +472,8 @@ export class PhysicsEngine {
         const vy = (p.pos.y - p.oldPos.y);
         
         // Bioelectric charge increases local viscosity (simulating mucus/secretion)
-        const viscosityMod = 1.0 + (p.charge * 5.0);
+        // Adjusted multiplier for more physical impact of charge
+        const viscosityMod = 1.0 + (p.charge * 3.0);
         
         // Apply structural modifier
         const dragFactor = BASE_DRAG * viscosityMod * structuralDragMod;
@@ -714,22 +716,21 @@ export class PhysicsEngine {
   }
 
   public smoothRenderPositions() {
-      // Linear Interpolation (Lerp) for visual smoothing.
-      // alpha = 0.35 offers a good balance between responsiveness and jitter reduction.
-      const alpha = 0.35; 
-      
+      // Robust Linear Interpolation (Lerp)
+      // Damped spring method was unstable; this provides reliable smoothing.
+      const alpha = 0.25; 
+
       this.bots.forEach(b => {
           b.particles.forEach(p => {
-              // Calculate difference
               const dx = p.pos.x - p.renderPos.x;
               const dy = p.pos.y - p.renderPos.y;
-              
-              // Teleport check: If distance is too large (e.g. respawn), snap instantly
-              if (dx*dx + dy*dy > 10000) {
+              const distSq = dx*dx + dy*dy;
+
+              // Teleport if too far (e.g. wrap around or respawn) to prevent "streaking"
+              if (distSq > 4000) {
                   p.renderPos.x = p.pos.x;
                   p.renderPos.y = p.pos.y;
               } else {
-                  // Standard Lerp
                   p.renderPos.x += dx * alpha;
                   p.renderPos.y += dy * alpha;
               }

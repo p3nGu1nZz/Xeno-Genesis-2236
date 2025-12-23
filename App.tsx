@@ -341,8 +341,8 @@ const App: React.FC = () => {
              const targetCamX = targetBot.centerOfMass.x + offsetX;
              const targetCamY = targetBot.centerOfMass.y;
              
-             // SMOOTHER CAMERA TRACKING (Reduced from 0.1)
-             const lerp = 0.05; 
+             // Standard Lerp for Stability
+             const lerp = 0.08; 
              
              setCamera(prev => ({
                  ...prev,

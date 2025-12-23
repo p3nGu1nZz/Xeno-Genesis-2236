@@ -21,29 +21,46 @@ const FS_SOURCE = `
   uniform vec2 u_offset; 
   uniform float u_zoom;
 
+  // Pseudo-random hash
   float hash(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
     p += dot(p, p + 45.32);
     return fract(p.x * p.y);
   }
 
+  // 2D Noise
   float noise(vec2 p) {
     vec2 i = floor(p);
     vec2 f = fract(p);
-    // Optimization: Hermite cubic interpolation for better visuals
+    // Cubic Hermite Interpolation
     f = f * f * (3.0 - 2.0 * f);
     return mix(mix(hash(i + vec2(0.0, 0.0)), hash(i + vec2(1.0, 0.0)), f.x),
                mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
   }
 
+  // Fractional Brownian Motion
   float fbm(vec2 p) {
-      // Optimization: Single iteration noise for performance, but with smooth interpolation
-      return noise(p);
+      float v = 0.0;
+      float a = 0.5;
+      mat2 rot = mat2(cos(0.5), sin(0.5), -sin(0.5), cos(0.5));
+      for (int i = 0; i < 3; i++) {
+          v += a * noise(p);
+          p = rot * p * 2.0 + vec2(u_time * 0.1);
+          a *= 0.5;
+      }
+      return v;
   }
 
   void main() {
-    vec2 uv = gl_FragCoord.xy / u_resolution.xy;
-    float aspect = u_resolution.x / u_resolution.y;
+    vec2 pixelCoord = gl_FragCoord.xy;
+    
+    // Scale field physics with zoom
+    // We want the field radius to look consistent relative to the bot size
+    float zoomScale = max(0.1, u_zoom);
+    // Base radius reduced for tighter, sharper field visualization
+    float radiusBase = 50.0 * zoomScale; 
+    float radiusSq = radiusBase * radiusBase;
+    
     float field = 0.0;
     float weightedIrruption = 0.0;
     
@@ -51,68 +68,77 @@ const FS_SOURCE = `
         if (i >= u_count) break;
         vec4 p = u_particles[i];
         
-        vec2 p_uv = vec2(p.x, u_resolution.y - p.y) / u_resolution.xy; 
-        vec2 diff = (uv - p_uv);
-        diff.x *= aspect;
+        // Convert JS screen coords (Top-Left 0,0) to GL coords (Bottom-Left 0,0)
+        vec2 pPos = vec2(p.x, u_resolution.y - p.y);
         
-        // Optimization: Use dot product for squared distance
+        vec2 diff = pixelCoord - pPos;
         float distSq = dot(diff, diff);
         
-        // Intensity is pre-calculated in JS to save sin() calls per pixel
-        float intensity = p.z; 
-        float irruption = p.w;
+        // Inverse square law for electric field
+        // Add epsilon related to zoom to prevent singularity and aliasing at center
+        float epsilon = 5.0 * zoomScale;
+        float contrib = (p.z * radiusSq) / (distSq + epsilon); 
         
-        // Optimization: Cull very low intensity influences
-        if (intensity > 0.001) {
-            // Use distSq directly in falloff calculation
-            float contrib = (intensity * 0.002) / (distSq + 0.0001);
-            contrib = min(contrib, 0.8); 
-
-            field += contrib;
-            weightedIrruption += irruption * contrib;
-        }
+        field += contrib;
+        weightedIrruption += p.w * contrib;
     }
     
     float avgIrruption = 0.0;
-    if (field > 0.0001) {
+    if (field > 0.001) {
         avgIrruption = weightedIrruption / field;
     }
     
-    vec2 flowOffset = vec2(
-        cos(u_time * 1.5 + field * 15.0),
-        sin(u_time * 2.0 + field * 10.0)
-    ) * field * 0.15; 
+    // Calculate world space coordinates for consistent noise texture regardless of camera
+    vec2 worldUV = (gl_FragCoord.xy / u_zoom) + u_offset;
 
-    vec2 worldUV = (gl_FragCoord.xy / u_zoom) - u_offset + flowOffset;
+    // Distortion Effect
+    // Use the field strength to distort the UVs for the noise function
+    // This creates a "heat shimmer" or "electric distortion" around active bots
+    float distortNoise = noise(worldUV * 0.02 + vec2(u_time * 0.2));
+    vec2 distortedUV = worldUV + vec2(distortNoise) * field * 10.0; // Distortion intensity scales with field
+
+    // Electric arcs / filaments
+    float n = fbm(distortedUV * 0.01 + vec2(0.0, u_time * 0.2));
     
-    float n = fbm(worldUV * 0.003 + vec2(u_time * 0.1, u_time * 0.05));
-    float flow = field * (0.5 + 0.5 * n);
+    // Make arcs sharper
+    float electricity = smoothstep(0.4, 0.45, n * field);
+    
+    // Dynamic Flow
+    float flow = field * (0.5 + 0.6 * n);
     
     vec4 color = vec4(0.0);
-    if (flow > 0.05) {
-       // Visualize Irruption (Mental Causation) as Red/Magenta shift
-       vec3 cLow = vec3(0.6, 0.0, 0.9);
-       vec3 cHigh = vec3(0.0, 1.0, 0.9);
+    
+    if (flow > 0.02) {
+       // Color Gradient
+       // Low Irruption: Deep Blue/Cyan
+       // High Irruption: Magenta/Electric White
        
-       // Modulate base color with irruption level
-       vec3 cIrruption = vec3(1.0, 0.2, 0.5); // Hot pink/Red for action
+       vec3 cCalm = vec3(0.0, 0.5, 1.0); // Cyan/Blue
+       vec3 cActive = vec3(1.0, 0.0, 0.8); // Magenta
        
-       vec3 baseColor = mix(cLow, cHigh, 0.5);
-       // Shift towards irruption color based on avgIrruption
-       baseColor = mix(baseColor, cIrruption, min(1.0, avgIrruption * 2.0));
+       vec3 baseColor = mix(cCalm, cActive, clamp(avgIrruption * 1.5, 0.0, 1.0));
+       
+       // Core brightness
+       vec3 cCore = mix(baseColor, vec3(1.0), 0.5);
+       
+       // Filament color
+       vec3 cElec = vec3(0.8, 0.9, 1.0);
 
-       vec3 cDark = baseColor * 0.2;
-       vec3 cMid = baseColor;
-       vec3 cBright = vec3(0.9, 1.0, 1.0); 
+       // Composition
+       float alpha = smoothstep(0.02, 0.2, flow);
+       alpha = clamp(alpha, 0.0, 0.6); // Max opacity
 
-       float t = smoothstep(0.05, 1.0, flow);
-       vec3 rgb = mix(cDark, cMid, smoothstep(0.0, 0.5, t));
-       rgb = mix(rgb, cBright, smoothstep(0.5, 1.0, t));
+       vec3 rgb = baseColor * flow * 1.5;
        
-       float alpha = smoothstep(0.02, 0.3, flow);
-       alpha = min(alpha, 0.5); 
+       // Add electric filaments
+       rgb += cElec * electricity * 2.0;
+       
+       // Highlight centers
+       rgb += cCore * smoothstep(0.8, 1.5, flow);
+
        color = vec4(rgb * alpha, alpha);
     }
+    
     gl_FragColor = color;
   }
 `;
@@ -505,12 +531,12 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foo
             
             const pulse = 1.0 - pulseDepth * (0.5 + 0.5 * Math.sin(time * pulseFreq));
             
-            // Scale down overall intensity (reduced to prevent obscuring)
-            const intensity = charge * pulse * 0.06;
+            // Intensity passed to shader
+            const intensity = charge * pulse;
             
             data[k*4] = screenX;
             data[k*4+1] = screenY;
-            data[k*4+2] = intensity; // Pass calculated intensity instead of raw charge
+            data[k*4+2] = intensity; // Pass calculated intensity
             data[k*4+3] = bot.irruption; // Pass Irruption level to shader
         }
 

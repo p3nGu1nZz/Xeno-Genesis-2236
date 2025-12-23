@@ -414,45 +414,7 @@ export class PhysicsEngine {
     const sCount = springs.length;
     const invGroundY = 1.0 / (groundY || 1);
 
-    // --- 1. PHASE SYNCHRONIZATION (New Logic) ---
-    const phases = new Float32Array(pCount);
-    const waveFreq = 3.0 + (memory * 2.0);
-
-    // Initialize intrinsic phases based on position and time
-    for(let i=0; i<pCount; i++) {
-        const p = particles[i];
-        // Use relative position to allow wave to travel along body
-        const relX = (p.pos.x - bot.centerOfMass.x) * 0.05;
-        const relY = (p.pos.y - bot.centerOfMass.y) * 0.05;
-        // Base phase from topology + deformation + time
-        phases[i] = p.phase + relX - relY - (time * waveFreq * Math.PI * 2);
-    }
-
-    // Sync phases between neighbors (Kuramoto-like)
-    if (!acousticActive) {
-        for(let i=0; i<sCount; i++) {
-            const s = springs[i];
-            const i1 = s.p1;
-            const i2 = s.p2;
-
-            // We want to maintain the topological phase difference (traveling wave)
-            // but smooth out any jitter caused by deformation.
-            // Using the static genome phase difference as the "target" gradient.
-            const targetDiff = particles[i2].phase - particles[i1].phase;
-            let diff = phases[i2] - phases[i1];
-
-            // Wrap phase difference to -PI..PI
-            while (diff <= -Math.PI) diff += Math.PI * 2;
-            while (diff > Math.PI) diff -= Math.PI * 2;
-
-            const err = diff - targetDiff;
-            const correction = err * syncStrength * 0.5; // Shared correction
-
-            phases[i1] += correction;
-            phases[i2] -= correction;
-        }
-    }
-
+    // Temp buffers for ciliary force synchronization
     const ciliaForcesX = new Float32Array(pCount);
     const ciliaForcesY = new Float32Array(pCount);
 
@@ -499,8 +461,16 @@ export class PhysicsEngine {
           propX = CILIA_FORCE; 
           bot.heading = bot.heading * 0.95; // Decay heading to 0 (right)
       } else {
-          // Metachronal Wave Logic using SYNCHRONIZED PHASES
-          const currentPhase = phases[i];
+          // Metachronal Wave Logic
+          const relX = (p.pos.x - bot.centerOfMass.x) * 0.05;
+          const relY = (p.pos.y - bot.centerOfMass.y) * 0.05;
+
+          const waveFreq = 3.0 + (memory * 2.0);
+          
+          // Spatial phase shift aligns movement
+          const spatialPhase = p.phase + relX - relY;
+          const currentPhase = spatialPhase - (time * waveFreq * Math.PI * 2);
+          
           const beat = Math.sin(currentPhase);
           
           // Calculate Thrust Magnitude (Asymmetric stroke)
@@ -549,7 +519,6 @@ export class PhysicsEngine {
 
     // Synchronize Ciliary Forces (Neighbor Smoothing)
     // This allows adjacent cells to coordinate their strokes, creating better waves
-    // Keeping this as a second layer of smoothing for the force vectors themselves
     for (let i = 0; i < sCount; i++) {
         const s = springs[i];
         const i1 = s.p1;

@@ -349,7 +349,8 @@ export class PhysicsEngine {
           const dvx = v2x - v1x;
           const dvy = v2y - v1y;
           
-          const dampingCoeff = 65.61; 
+          // Increased damping by 1.2x to prevent disintegration
+          const dampingCoeff = 65.61 * 1.2; 
 
           p1.force.x += dvx * dampingCoeff;
           p1.force.y += dvy * dampingCoeff;
@@ -380,7 +381,8 @@ export class PhysicsEngine {
 
           const diff = (dist - targetLen) / dist;
           
-          const forceVal = (s.stiffness * 131.22) * diff;
+          // Increased stiffness by 1.2x to maintain morphology
+          const forceVal = (s.stiffness * 131.22 * 1.2) * diff;
 
           const stress = Math.abs(diff); 
           const chargeGen = stress * 0.6;
@@ -712,10 +714,25 @@ export class PhysicsEngine {
   }
 
   public smoothRenderPositions() {
+      // Linear Interpolation (Lerp) for visual smoothing.
+      // alpha = 0.35 offers a good balance between responsiveness and jitter reduction.
+      const alpha = 0.35; 
+      
       this.bots.forEach(b => {
           b.particles.forEach(p => {
-              p.renderPos.x = p.pos.x;
-              p.renderPos.y = p.pos.y;
+              // Calculate difference
+              const dx = p.pos.x - p.renderPos.x;
+              const dy = p.pos.y - p.renderPos.y;
+              
+              // Teleport check: If distance is too large (e.g. respawn), snap instantly
+              if (dx*dx + dy*dy > 10000) {
+                  p.renderPos.x = p.pos.x;
+                  p.renderPos.y = p.pos.y;
+              } else {
+                  // Standard Lerp
+                  p.renderPos.x += dx * alpha;
+                  p.renderPos.y += dy * alpha;
+              }
           });
       });
   }

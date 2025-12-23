@@ -341,8 +341,8 @@ const App: React.FC = () => {
              const targetCamX = targetBot.centerOfMass.x + offsetX;
              const targetCamY = targetBot.centerOfMass.y;
              
-             // High responsiveness for snappy tracking
-             const lerp = 0.1; 
+             // SMOOTHER CAMERA TRACKING (Reduced from 0.1)
+             const lerp = 0.05; 
              
              setCamera(prev => ({
                  ...prev,

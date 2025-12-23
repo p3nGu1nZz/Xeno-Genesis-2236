@@ -10,35 +10,35 @@ export const DEFAULT_CONFIG: SimulationConfig = {
   populationSize: INITIAL_POPULATION_SIZE,
   maxPopulationSize: MAX_POPULATION_CAP,
   gravity: 0.15, 
-  friction: 0.96, // Reduced drag (was 0.92) to allow more gliding/momentum
-  muscleStrength: 0.25, 
+  friction: 0.96, // Reduced drag to allow more gliding/momentum
+  muscleStrength: 0.35, // Increased strength
   muscleSpeed: 0.1, 
   groundHeight: 1200, 
-  gridScale: 48, 
-  bioelectricDecay: 0.96,
-  plasticity: 0.002, 
-  syncRate: 0.3, // Increased from 0.2 for snappier visual response to physics
+  gridScale: 85, // Increased from 65 to 85 for wider node spacing
+  bioelectricDecay: 0.98,
+  plasticity: 0.0005, 
+  syncRate: 0.4, 
   generationDuration: 0, 
-  acousticFreq: 0, // Hz
 };
 
 export const COLORS = {
   HEART: '#ef4444', 
   NEURON: '#eab308', 
   EMPTY: 'transparent',
-  SPRING_PASSIVE: 'rgba(255, 255, 255, 0.2)',
-  SPRING_ACTIVE: 'rgba(239, 68, 68, 0.6)',
+  SPRING_PASSIVE: 'rgba(255, 255, 255, 0.4)',
+  SPRING_ACTIVE: 'rgba(239, 68, 68, 0.8)',
   BIO_FIELD: '#00f3ff', 
   FOOD: '#39ff14',
 };
 
-export const TIMESTEP = 0.8; // Reduced from 1.0 for better stability
-export const CONSTRAINT_ITERATIONS = 6;
+export const TIMESTEP = 0.8; 
+export const CONSTRAINT_ITERATIONS = 8; 
 
 // Biological Constants based on papers
-export const CILIA_FORCE = 0.4; // Reduced from 0.6 to prevent explosion
-export const METABOLIC_DECAY = 0.08; // Increased slightly to make food necessary
+export const CILIA_FORCE = 0.5; 
+export const METABOLIC_DECAY = 0.08; 
 export const INITIAL_YOLK_ENERGY = 1200; 
+export const MITOSIS_THRESHOLD = 2000; // Energy required to trigger deliberate splitting
 export const SURFACE_TENSION = 0.005; 
 export const FOOD_COUNT = 40;
 export const FOOD_ENERGY = 600;

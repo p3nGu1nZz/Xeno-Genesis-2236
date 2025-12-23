@@ -87,7 +87,6 @@ export interface SimulationConfig {
   plasticity: number; 
   syncRate: number; 
   generationDuration: number; 
-  acousticFreq: number; // 0 = Off, 300 = Linearizing Stimulus
 }
 
 export interface AnalysisResult {

@@ -1,7 +1,6 @@
 
 import React from 'react';
-import { Play, Pause, Zap, Activity, Settings, Volume2, VolumeX, PanelLeftClose, PanelLeftOpen, Dna, Microscope } from 'lucide-react';
-import { SimulationConfig } from '../types';
+import { Play, Pause, Zap, Activity, Settings, PanelLeftClose, PanelLeftOpen, Dna } from 'lucide-react';
 
 interface ControlsProps {
   isRunning: boolean;
@@ -12,14 +11,10 @@ interface ControlsProps {
   onAnalyze: () => void;
   onOpenSettings: () => void;
   isAnalyzing: boolean;
-  onToggleAcoustic: () => void;
-  acousticActive: boolean;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
-  showGenomeA: boolean;
-  onToggleGenomeA: () => void;
-  showGenomeB: boolean;
-  onToggleGenomeB: () => void;
+  showGenomePanel: boolean;
+  onToggleGenomePanel: () => void;
 }
 
 export const Controls: React.FC<ControlsProps> = ({
@@ -27,17 +22,11 @@ export const Controls: React.FC<ControlsProps> = ({
   generation,
   evolutionProgress,
   onTogglePlay,
-  onAnalyze,
   onOpenSettings,
-  isAnalyzing,
-  onToggleAcoustic,
-  acousticActive,
   isCollapsed,
   onToggleCollapse,
-  showGenomeA,
-  onToggleGenomeA,
-  showGenomeB,
-  onToggleGenomeB
+  showGenomePanel,
+  onToggleGenomePanel
 }) => {
   return (
     <div 
@@ -66,39 +55,22 @@ export const Controls: React.FC<ControlsProps> = ({
                 {isRunning ? <Pause size={20} /> : <Play size={20} />}
             </button>
 
-            <button 
-                onClick={onOpenSettings}
-                className="p-3 text-slate-400 hover:text-white"
-                title="Settings"
-            >
-                <Settings size={20} />
-            </button>
-
-            <div className="flex flex-col gap-2 w-full px-2">
-                 <button 
-                   onClick={onToggleGenomeA}
-                   className={`p-2 rounded transition-all ${showGenomeA ? 'text-neon-cyan bg-neon-cyan/10 border border-neon-cyan/50' : 'text-slate-600 border border-transparent'}`}
-                   title="Toggle Genome A"
-                 >
-                   <Dna size={18} />
-                 </button>
-                 <button 
-                   onClick={onToggleGenomeB}
-                   className={`p-2 rounded transition-all ${showGenomeB ? 'text-neon-magenta bg-neon-magenta/10 border border-neon-magenta/50' : 'text-slate-600 border border-transparent'}`}
-                   title="Toggle Genome B"
-                 >
-                   <Dna size={18} />
-                 </button>
-            </div>
-
-            <div className="mt-auto flex flex-col gap-4 mb-4">
-                 <button 
-                    onClick={onToggleAcoustic}
-                    className={`p-3 rounded-full ${acousticActive ? 'text-neon-magenta animate-pulse' : 'text-slate-600'}`}
-                    title="Acoustic Stimulus"
-                 >
-                     {acousticActive ? <Volume2 size={20} /> : <VolumeX size={20} />}
-                 </button>
+            <div className="flex flex-col gap-4 mt-auto mb-4">
+                <button 
+                    onClick={onToggleGenomePanel}
+                    className={`p-2 rounded transition-all ${showGenomePanel ? 'text-neon-cyan bg-neon-cyan/10 border border-neon-cyan/50' : 'text-slate-600 border border-transparent'}`}
+                    title="Open Genome Database"
+                >
+                    <Dna size={20} />
+                </button>
+                
+                <button 
+                    onClick={onOpenSettings}
+                    className="p-2 text-slate-400 hover:text-white"
+                    title="Settings"
+                >
+                    <Settings size={20} />
+                </button>
             </div>
         </div>
       )}
@@ -110,7 +82,7 @@ export const Controls: React.FC<ControlsProps> = ({
                 XENO<br/>GENESIS
             </h1>
             <div className="text-xs font-mono text-slate-400 tracking-widest mb-4">
-                VER 2236.4.2 // TUFTS_ARCHIVE
+                VER 2236.4.3 // TUFTS_ARCHIVE
             </div>
 
             <div className="flex gap-2 mb-6">
@@ -154,46 +126,20 @@ export const Controls: React.FC<ControlsProps> = ({
                     </div>
                 </div>
 
-                {/* Genome Monitors */}
-                <div className="grid grid-cols-2 gap-3">
-                    <button 
-                        onClick={onToggleGenomeA}
-                        className={`p-3 rounded border flex flex-col items-center gap-2 transition-all ${
-                            showGenomeA 
-                            ? 'bg-neon-cyan/10 border-neon-cyan/50 text-neon-cyan' 
-                            : 'bg-slate-950 border-slate-800 text-slate-500 hover:border-slate-600'
-                        }`}
-                    >
-                        <Dna size={20} />
-                        <span className="text-[10px] font-bold">GROUP A</span>
-                    </button>
-                    <button 
-                        onClick={onToggleGenomeB}
-                        className={`p-3 rounded border flex flex-col items-center gap-2 transition-all ${
-                            showGenomeB 
-                            ? 'bg-neon-magenta/10 border-neon-magenta/50 text-neon-magenta' 
-                            : 'bg-slate-950 border-slate-800 text-slate-500 hover:border-slate-600'
-                        }`}
-                    >
-                        <Dna size={20} />
-                        <span className="text-[10px] font-bold">GROUP B</span>
-                    </button>
-                </div>
-
-                {/* Acoustic Stimulation Control */}
+                {/* Single Genome Monitor Button */}
                 <button 
-                onClick={onToggleAcoustic}
-                className={`w-full flex items-center justify-between p-4 rounded border transition-all ${
-                    acousticActive 
-                    ? 'bg-neon-magenta/20 border-neon-magenta text-white' 
-                    : 'bg-slate-950 border-slate-800 text-slate-500 hover:border-slate-600'
-                }`}
+                    onClick={onToggleGenomePanel}
+                    className={`w-full p-4 rounded border flex flex-col items-center gap-2 transition-all group ${
+                        showGenomePanel 
+                        ? 'bg-neon-cyan/10 border-neon-cyan/50 text-neon-cyan' 
+                        : 'bg-slate-950 border-slate-800 text-slate-500 hover:border-slate-600 hover:bg-slate-900'
+                    }`}
                 >
-                    <div className="flex items-center gap-2">
-                        {acousticActive ? <Volume2 size={18} /> : <VolumeX size={18} />}
-                        <span className="text-xs font-bold uppercase">300Hz Stimulus</span>
+                    <div className="flex items-center gap-3">
+                        <Dna size={24} className={showGenomePanel ? "animate-pulse" : ""} />
+                        <span className="font-bold text-sm tracking-wider group-hover:text-white transition-colors">GENOME DATABASE</span>
                     </div>
-                    <div className={`w-2 h-2 rounded-full ${acousticActive ? 'bg-neon-magenta animate-pulse' : 'bg-slate-700'}`}></div>
+                    <span className="text-[10px] opacity-70">VIEW ACTIVE NEURAL GROUPS</span>
                 </button>
 
                 <div className="bg-slate-950 p-4 rounded border border-slate-800">

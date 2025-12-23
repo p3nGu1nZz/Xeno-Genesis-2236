@@ -1,14 +1,15 @@
 
 import { Xenobot, Particle, Spring, Genome, CellType, SimulationConfig, Food } from '../types';
-import { DEFAULT_CONFIG, TIMESTEP, CILIA_FORCE, METABOLIC_DECAY, INITIAL_YOLK_ENERGY, SURFACE_TENSION, FOOD_COUNT, FOOD_ENERGY, FOOD_RADIUS } from '../constants';
+import { DEFAULT_CONFIG, TIMESTEP, CILIA_FORCE, METABOLIC_DECAY, INITIAL_YOLK_ENERGY, SURFACE_TENSION, FOOD_COUNT, FOOD_ENERGY, FOOD_RADIUS, MITOSIS_THRESHOLD } from '../constants';
 import { mutate } from './geneticAlgorithm';
 
 const uid = () => Math.random().toString(36).substr(2, 9);
-const MAX_FORCE = 10.0;
-const MAX_VELOCITY = 15.0;
+const MAX_FORCE = 15.0;
+const MAX_VELOCITY = 20.0;
 const PARTICLE_MAINTENANCE_COST = 0.005;
-const BOUNDARY_LIMIT = 2000; // Edge of the safe zone
-const COLLISION_RADIUS = 9; // Slightly larger than render radius (8)
+const BOUNDARY_LIMIT = 2500; 
+const COLLISION_RADIUS = 12; 
+const BREAKING_THRESHOLD = 4.5; // Significantly increased to prevent accidental tearing
 
 export class PhysicsEngine {
   bots: Xenobot[] = [];
@@ -30,22 +31,19 @@ export class PhysicsEngine {
   }
 
   spawnFood() {
-     // Expand spread to cover entire arena
-     const spreadX = 4000; 
-     const spreadY = 3000;
-
-     const x = (Math.random() - 0.5) * spreadX; 
-     // Allow food to spawn higher up but keep it below a certain ceiling and above ground
-     const y = (Math.random() - 0.5) * spreadY;
-     
-     const clampedY = Math.max(-2000, Math.min(this.groundY - 50, y));
+     const xRange = BOUNDARY_LIMIT * 2;
+     const x = (Math.random() - 0.5) * xRange;
+     const deepLimit = -2500;
+     const surfaceBuffer = 100;
+     const surfaceLimit = this.groundY - surfaceBuffer;
+     const y = deepLimit + Math.random() * (surfaceLimit - deepLimit);
 
      this.food.push({
          id: uid(),
          x,
-         y: clampedY,
+         y,
          energy: FOOD_ENERGY,
-         phase: Math.random() * Math.PI * 2
+         phase: Math.random() * Math.PI * 2 
      });
   }
 
@@ -71,7 +69,7 @@ export class PhysicsEngine {
             pos: { x: px, y: py },
             oldPos: { x: px, y: py },
             renderPos: { x: px, y: py }, 
-            mass: 1,
+            mass: 1.2, 
             force: { x: 0, y: 0 },
             charge: 0,
             phase: x * 0.6 + y * 0.1
@@ -105,7 +103,9 @@ export class PhysicsEngine {
                 
                 const isMuscle = (type1 === CellType.HEART || type2 === CellType.HEART);
                 const isNeuron = (type1 === CellType.NEURON || type2 === CellType.NEURON);
-                const stiffness = isNeuron ? 0.8 : 0.3;
+                
+                // Very stiff springs to keep shape
+                const stiffness = isNeuron ? 0.98 : 0.7; 
 
                 springs.push({
                     p1: p1Idx,
@@ -145,51 +145,10 @@ export class PhysicsEngine {
     };
   }
 
-  // Refactored: More deterministic evolution based on energy thresholds ("Selfish Gene")
   evolvePopulation(currentGeneration: number): boolean {
-      const MAX_SPAWNS = 3; 
-      let spawnCount = 0;
-      let evolutionOccurred = false;
-      const bots = this.bots;
-      
-      const REPRODUCTION_THRESHOLD = 800; // Energy required to consider reproduction
-      const REPRODUCTION_COST = 400;
-
-      // Filter healthy bots
-      const candidates = bots.filter(b => !b.isDead && b.energy > REPRODUCTION_THRESHOLD);
-      
-      // Shuffle candidates to prevent bias
-      for (let i = candidates.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
-      }
-
-      for (const parent of candidates) {
-          if (spawnCount >= MAX_SPAWNS) break;
-          if (this.bots.length >= this.config.maxPopulationSize) break;
-
-          // Probability increases with excess energy
-          const excessEnergy = parent.energy - REPRODUCTION_THRESHOLD;
-          const chance = excessEnergy / 2000; // e.g. 2000 excess = 100% chance
-          
-          // Base mutation chance of 5% for anyone above threshold, plus bonus
-          if (Math.random() < Math.max(0.05, chance)) {
-             const childGenome = mutate(parent.genome);
-             childGenome.generation = currentGeneration + 1;
-             
-             const spawnX = parent.centerOfMass.x + (Math.random() - 0.5) * 50;
-             const spawnY = parent.centerOfMass.y + (Math.random() - 0.5) * 50;
-             childGenome.originX = spawnX;
-             
-             const childBot = this.createBot(childGenome, spawnX, spawnY);
-             this.addBot(childBot);
-             
-             parent.energy -= REPRODUCTION_COST;
-             spawnCount++;
-             evolutionOccurred = true;
-          }
-      }
-      return evolutionOccurred;
+      // Traditional genetic evolution fallback if needed
+      // But primary reproduction is now via Mitosis logic below
+      return false;
   }
 
   update(time: number) {
@@ -199,7 +158,6 @@ export class PhysicsEngine {
     let livingCount = 0;
     let totalMemory = 0;
 
-    // Maintenance & cleanup
     if (this.food.length < FOOD_COUNT) {
         if (Math.random() < 0.1) this.spawnFood();
     }
@@ -212,38 +170,239 @@ export class PhysicsEngine {
         }
     }
     
-    // Global parameters based on collective consciousness
     const avgMemory = livingCount > 0 ? totalMemory / livingCount : 0.5;
     const collectiveFriction = this.config.friction + (avgMemory - 0.5) * 0.08;
     const fluidBaseFriction = Math.max(0.85, Math.min(0.995, collectiveFriction));
     
-    // Optimized: Apply social forces
     if (botCount > 1) {
         this.applySocialForces(botCount);
         this.resolveCollisions(botCount);
     }
 
-    // Update each bot
+    // New Bots Queue (from splitting)
+    const newBots: Xenobot[] = [];
+
     for (let i = 0; i < botCount; i++) {
       const bot = this.bots[i];
       if (bot.isDead) continue;
+      
       this.updateBot(bot, time, dt, dtSq, fluidBaseFriction);
+      
+      // Deliberate Mitosis Logic
+      if (bot.energy > MITOSIS_THRESHOLD) {
+          this.triggerMitosis(bot);
+      }
+
+      // Structural Integrity Check (Handles the actual splitting after trigger)
+      const splitResult = this.checkStructuralIntegrity(bot);
+      if (splitResult) {
+          newBots.push(splitResult);
+      }
+    }
+    
+    if (newBots.length > 0) {
+        this.bots.push(...newBots);
     }
     
     this.smoothRenderPositions();
   }
+
+  private triggerMitosis(bot: Xenobot) {
+      if (bot.particles.length < 6) return; // Too small to split
+
+      // 1. Calculate Principal Axis (Line of separation)
+      // Find min/max bounds
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      bot.particles.forEach(p => {
+          if (p.pos.x < minX) minX = p.pos.x;
+          if (p.pos.x > maxX) maxX = p.pos.x;
+          if (p.pos.y < minY) minY = p.pos.y;
+          if (p.pos.y > maxY) maxY = p.pos.y;
+      });
+
+      const width = maxX - minX;
+      const height = maxY - minY;
+      const com = bot.centerOfMass;
+
+      // Determine split axis (perpendicular to longest dimension)
+      const isHorizontalSplit = width > height;
+
+      // 2. Sever Springs crossing the axis
+      // We iterate backwards to remove safely
+      for (let i = bot.springs.length - 1; i >= 0; i--) {
+          const s = bot.springs[i];
+          const p1 = bot.particles[s.p1];
+          const p2 = bot.particles[s.p2];
+
+          let shouldCut = false;
+          if (isHorizontalSplit) {
+              // Cut vertically: if one is left of COM and other is right
+              if ((p1.pos.x < com.x && p2.pos.x > com.x) || (p1.pos.x > com.x && p2.pos.x < com.x)) {
+                  shouldCut = true;
+              }
+          } else {
+              // Cut horizontally: if one is above COM and other is below
+              if ((p1.pos.y < com.y && p2.pos.y > com.y) || (p1.pos.y > com.y && p2.pos.y < com.y)) {
+                  shouldCut = true;
+              }
+          }
+
+          if (shouldCut) {
+              bot.springs.splice(i, 1);
+          }
+      }
+
+      // Reduce energy to pay for mitosis
+      bot.energy -= 400; 
+  }
+  
+  // Returns a new bot if a split occurred, null otherwise
+  private checkStructuralIntegrity(bot: Xenobot): Xenobot | null {
+      // 1. Check for broken springs (Physics Tearing)
+      let brokenIndices: number[] = [];
+      for(let i = 0; i < bot.springs.length; i++) {
+          const s = bot.springs[i];
+          const p1 = bot.particles[s.p1];
+          const p2 = bot.particles[s.p2];
+          const dx = p1.pos.x - p2.pos.x;
+          const dy = p1.pos.y - p2.pos.y;
+          const dist = Math.sqrt(dx*dx + dy*dy);
+          
+          if (dist > s.restLength * BREAKING_THRESHOLD) {
+              brokenIndices.push(i);
+          }
+      }
+
+      for(let i = brokenIndices.length - 1; i >= 0; i--) {
+          bot.springs.splice(brokenIndices[i], 1);
+      }
+
+      // 2. Connected Components Analysis (BFS)
+      const particles = bot.particles;
+      const visited = new Set<number>();
+      const clusters: number[][] = [];
+
+      const adj: number[][] = Array(particles.length).fill(null).map(() => []);
+      for(const s of bot.springs) {
+          adj[s.p1].push(s.p2);
+          adj[s.p2].push(s.p1);
+      }
+
+      for(let i = 0; i < particles.length; i++) {
+          if(!visited.has(i)) {
+              const cluster: number[] = [];
+              const queue = [i];
+              visited.add(i);
+              
+              while(queue.length > 0) {
+                  const node = queue.shift()!;
+                  cluster.push(node);
+                  
+                  for(const neighbor of adj[node]) {
+                      if(!visited.has(neighbor)) {
+                          visited.add(neighbor);
+                          queue.push(neighbor);
+                      }
+                  }
+              }
+              clusters.push(cluster);
+          }
+      }
+
+      if (clusters.length <= 1) return null;
+
+      clusters.sort((a, b) => b.length - a.length);
+      const mainClusterIndices = new Set(clusters[0]);
+      const splitClusterIndices = clusters[1]; 
+
+      if (splitClusterIndices.length < 3) {
+          return null; 
+      }
+
+      const newBotParticles: Particle[] = [];
+      const newBotSprings: Spring[] = [];
+      const oldToNewIndexMap = new Map<number, number>();
+
+      splitClusterIndices.forEach((oldIdx, newIdx) => {
+          newBotParticles.push(bot.particles[oldIdx]);
+          oldToNewIndexMap.set(oldIdx, newIdx);
+      });
+
+      for (let i = bot.springs.length - 1; i >= 0; i--) {
+          const s = bot.springs[i];
+          const p1InSplit = oldToNewIndexMap.has(s.p1);
+          const p2InSplit = oldToNewIndexMap.has(s.p2);
+
+          if (p1InSplit && p2InSplit) {
+              newBotSprings.push({
+                  ...s,
+                  p1: oldToNewIndexMap.get(s.p1)!,
+                  p2: oldToNewIndexMap.get(s.p2)!
+              });
+              bot.springs.splice(i, 1);
+          } else if (p1InSplit || p2InSplit) {
+              bot.springs.splice(i, 1);
+          }
+      }
+
+      const keptParticles: Particle[] = [];
+      const oldBotNewIndexMap = new Map<number, number>();
+      
+      let keptCount = 0;
+      for(let i=0; i<bot.particles.length; i++) {
+          if (mainClusterIndices.has(i)) {
+              keptParticles.push(bot.particles[i]);
+              oldBotNewIndexMap.set(i, keptCount);
+              keptCount++;
+          }
+      }
+      bot.particles = keptParticles;
+
+      const validSprings: Spring[] = [];
+      for(const s of bot.springs) {
+          if(oldBotNewIndexMap.has(s.p1) && oldBotNewIndexMap.has(s.p2)) {
+              s.p1 = oldBotNewIndexMap.get(s.p1)!;
+              s.p2 = oldBotNewIndexMap.get(s.p2)!;
+              validSprings.push(s);
+          }
+      }
+      bot.springs = validSprings;
+
+      // Construct the new Bot
+      // Mutate the genome slightly for the new offspring
+      const newGenome = mutate(bot.genome);
+      newGenome.id = uid();
+
+      const newBot: Xenobot = {
+          id: uid(),
+          genome: newGenome,
+          particles: newBotParticles,
+          springs: newBotSprings,
+          centerOfMass: { x: 0, y: 0 }, 
+          startPosition: { x: 0, y: 0 },
+          isDead: false,
+          totalCharge: 0,
+          groupId: bot.groupId, 
+          energy: bot.energy * 0.5, 
+          age: 0, 
+          heading: bot.heading + Math.PI + (Math.random() - 0.5), 
+          irruption: 0,
+          absorption: 0
+      };
+      
+      bot.energy *= 0.5; 
+
+      return newBot;
+  }
   
   smoothRenderPositions() {
-    // Implement Lerp (Linear Interpolation) for smoother rendering
-    // Alpha determines how quickly renderPos catches up to physics pos
-    const alpha = 0.2; 
-    const snapThresholdSq = 100 * 100; // Snap if distance is large (e.g. initial spawn)
-    const sleepThresholdSq = 0.01; // Avoid micro-jitter updates
+    const alpha = 0.15; 
+    const snapThresholdSq = 100 * 100;
+    const sleepThresholdSq = 0.001; 
 
     for (const bot of this.bots) {
         if (bot.isDead) continue;
         for (const p of bot.particles) {
-            // Safety check
             if (!Number.isFinite(p.renderPos.x) || !Number.isFinite(p.renderPos.y)) {
                 p.renderPos.x = p.pos.x;
                 p.renderPos.y = p.pos.y;
@@ -258,7 +417,6 @@ export class PhysicsEngine {
                 p.renderPos.x = p.pos.x;
                 p.renderPos.y = p.pos.y;
             } else if (distSq > sleepThresholdSq) {
-                // Apply Lerp
                 p.renderPos.x += dx * alpha;
                 p.renderPos.y += dy * alpha;
             } else {
@@ -269,65 +427,55 @@ export class PhysicsEngine {
     }
   }
 
-  // Basic Collider Implementation to prevent overlap
   private resolveCollisions(botCount: number) {
-      for (let i = 0; i < botCount; i++) {
-          const b1 = this.bots[i];
-          if (b1.isDead) continue;
+      const iterations = 4; 
+      
+      for (let k = 0; k < iterations; k++) {
+        for (let i = 0; i < botCount; i++) {
+            const b1 = this.bots[i];
+            if (b1.isDead) continue;
 
-          for (let j = i + 1; j < botCount; j++) {
-              const b2 = this.bots[j];
-              if (b2.isDead) continue;
+            for (let j = i + 1; j < botCount; j++) {
+                const b2 = this.bots[j];
+                if (b2.isDead) continue;
 
-              // Broad Phase: AABB / Bounding Circle
-              const dx = b1.centerOfMass.x - b2.centerOfMass.x;
-              const dy = b1.centerOfMass.y - b2.centerOfMass.y;
-              const distSq = dx*dx + dy*dy;
-              const combinedRadius = 300; // Approximate radius of a bot
+                const dx = b1.centerOfMass.x - b2.centerOfMass.x;
+                const dy = b1.centerOfMass.y - b2.centerOfMass.y;
+                const distSq = dx*dx + dy*dy;
+                if (distSq > 160000) continue; // 400^2 optimized broadphase
 
-              if (distSq > combinedRadius * combinedRadius) continue;
-
-              // Narrow Phase: Particle vs Particle
-              for (const p1 of b1.particles) {
-                  for (const p2 of b2.particles) {
-                      const pdx = p1.pos.x - p2.pos.x;
-                      const pdy = p1.pos.y - p2.pos.y;
-                      const pDistSq = pdx*pdx + pdy*pdy;
-                      const minDist = COLLISION_RADIUS * 2;
-                      
-                      if (pDistSq < minDist * minDist && pDistSq > 0.0001) {
-                          const pDist = Math.sqrt(pDistSq);
-                          const overlap = minDist - pDist;
-                          const nx = pdx / pDist;
-                          const ny = pdy / pDist;
-
-                          // Apply impulse to separate
-                          const separation = overlap * 0.5;
-                          
-                          // Position Correction
-                          p1.pos.x += nx * separation;
-                          p1.pos.y += ny * separation;
-                          p2.pos.x -= nx * separation;
-                          p2.pos.y -= ny * separation;
-
-                          // Velocity damping (friction)
-                          const kFriction = 0.9;
-                          p1.oldPos.x = p1.pos.x - (p1.pos.x - p1.oldPos.x) * kFriction;
-                          p1.oldPos.y = p1.pos.y - (p1.pos.y - p1.oldPos.y) * kFriction;
-                          p2.oldPos.x = p2.pos.x - (p2.pos.x - p2.oldPos.x) * kFriction;
-                          p2.oldPos.y = p2.pos.y - (p2.pos.y - p2.oldPos.y) * kFriction;
-                      }
-                  }
-              }
-          }
+                for (const p1 of b1.particles) {
+                    for (const p2 of b2.particles) {
+                        const pdx = p1.pos.x - p2.pos.x;
+                        const pdy = p1.pos.y - p2.pos.y;
+                        const pDistSq = pdx*pdx + pdy*pdy;
+                        const minDist = COLLISION_RADIUS * 2;
+                        
+                        if (pDistSq < minDist * minDist && pDistSq > 0.0001) {
+                            const pDist = Math.sqrt(pDistSq);
+                            const overlap = minDist - pDist;
+                            const nx = pdx / pDist;
+                            const ny = pdy / pDist;
+                            
+                            const separation = overlap * 0.4;
+                            
+                            p1.pos.x += nx * separation;
+                            p1.pos.y += ny * separation;
+                            p2.pos.x -= nx * separation;
+                            p2.pos.y -= ny * separation;
+                        }
+                    }
+                }
+            }
+        }
       }
   }
 
   private applySocialForces(botCount: number) {
-      const GROUP_REPULSION_RADIUS = 300; 
-      const GROUP_FORCE = 0.5;
-      const SELF_REPULSION_RADIUS = 80; 
-      const SELF_FORCE = 0.1;
+      const GROUP_REPULSION_RADIUS = 500; // Significantly increased to keep groups apart
+      const GROUP_FORCE = 1.0; 
+      const SELF_REPULSION_RADIUS = 150; 
+      const SELF_FORCE = 0.3;
 
       for (let i = 0; i < botCount; i++) {
           const b1 = this.bots[i];
@@ -347,10 +495,10 @@ export class PhysicsEngine {
               let force = 0;
 
               if (b1.groupId !== b2.groupId) {
-                  // Inter-group repulsion
+                  // Strong Inter-group repulsion
                   force = ((GROUP_REPULSION_RADIUS - dist) / GROUP_REPULSION_RADIUS) * GROUP_FORCE;
               } else if (dist < SELF_REPULSION_RADIUS) {
-                  // Intra-group repulsion
+                  // Intra-group spacing
                   force = ((SELF_REPULSION_RADIUS - dist) / SELF_REPULSION_RADIUS) * SELF_FORCE;
               }
 
@@ -367,16 +515,13 @@ export class PhysicsEngine {
   private distributeForce(bot: Xenobot, fx: number, fy: number) {
       const count = bot.particles.length;
       if (count === 0) return;
-      // Clamp to prevent physics explosion from single large impulse
-      const pFx = Math.max(-2, Math.min(2, fx / count));
-      const pFy = Math.max(-2, Math.min(2, fy / count));
+      const pFx = Math.max(-5, Math.min(5, fx / count));
+      const pFy = Math.max(-5, Math.min(5, fy / count));
       for (const p of bot.particles) {
           p.force.x += pFx;
           p.force.y += pFy;
       }
   }
-
-  // --- Decomposed Update Logic with Mind-Body Operators ---
 
   private updateBot(bot: Xenobot, time: number, dt: number, dtSq: number, fluidBaseFriction: number) {
     bot.energy -= METABOLIC_DECAY;
@@ -387,46 +532,30 @@ export class PhysicsEngine {
         return; 
     }
 
-    // ARCHITECTURE PHASE A: Mental Causation (Irruption)
-    // The "Unobservable Mental Cause" (Genome/Phase) exerts "Irruption" into the material world via muscle forces.
     const irruption = this.performIrruption(bot, time);
     bot.irruption = irruption;
 
-    // PHYSICS PHASE: Material Event
-    // Calculate environmental forces (Fluid dynamics, cilia) and integrate positions
     this.performMaterialPhysics(bot, time, dt, dtSq, fluidBaseFriction);
 
-    // ARCHITECTURE PHASE B: Conscious Experience (Absorption)
-    // The "Unintelligible Material Event" (Collisions, Stress) causes "Absorption" into the mental state (Energy, Memory).
     const absorption = this.performAbsorption(bot);
     bot.absorption = absorption;
     
-    // Decay values for visualization
     bot.irruption *= 0.8;
     bot.absorption *= 0.8;
   }
 
-  // Corresponds to "Mental Causation -> Irruption"
   private performIrruption(bot: Xenobot, time: number): number {
-      // 1. Internal Structure Updates (Springs/Muscles)
-      // This function returns the total active charge generated by muscles/structure
       const activeCharge = this.updateInternalStructure(bot, time);
       bot.totalCharge = activeCharge;
-      
-      // Irruption is proportional to the active charge (effort) being exerted
       return activeCharge;
   }
 
-  // Corresponds to "Physics Integration"
   private performMaterialPhysics(bot: Xenobot, time: number, dt: number, dtSq: number, fluidBaseFriction: number) {
     const particles = bot.particles;
     const pCount = particles.length;
-
-    // Temporary buffers for cilia sync
     const ciliaForcesX = new Float32Array(pCount);
     const ciliaForcesY = new Float32Array(pCount);
     
-    // Cilia Cohesion Calculation
     let avgVx = 0, avgVy = 0;
     for (let i = 0; i < pCount; i++) {
         avgVx += (particles[i].pos.x - particles[i].oldPos.x);
@@ -435,33 +564,26 @@ export class PhysicsEngine {
     avgVx /= (pCount || 1);
     avgVy /= (pCount || 1);
 
-    // 1. Calculate Particle Forces (Gravity, Fluid, Cilia)
     for (let i = 0; i < pCount; i++) {
         const p = particles[i];
         
-        // Structure cost
         bot.energy -= PARTICLE_MAINTENANCE_COST;
         
-        // Gravity / Buoyancy
         p.force.x = 0;
         p.force.y = this.config.gravity; 
         const invGroundY = 1.0 / (this.groundY || 1);
         let depthRatio = Math.max(0, Math.min(1, p.pos.y * invGroundY));
         p.force.y -= this.config.gravity * (0.9 + depthRatio * 0.1);
 
-        // Fluid Current
         p.force.x += Math.sin(time * 0.5 + depthRatio * 4.0) * 0.08;
         
-        // Brownian Motion
         p.force.x += (Math.random() - 0.5) * 0.5;
         p.force.y += (Math.random() - 0.5) * 0.5;
 
-        // Cilia Calculation
         const { cx, cy } = this.calculateCiliaForce(bot, p, time, avgVx, avgVy);
         ciliaForcesX[i] = cx;
         ciliaForcesY[i] = cy;
 
-        // Surface Tension
         const dxSelf = bot.centerOfMass.x - p.pos.x;
         const dySelf = bot.centerOfMass.y - p.pos.y;
         p.force.x += dxSelf * SURFACE_TENSION;
@@ -470,45 +592,34 @@ export class PhysicsEngine {
         p.charge *= this.config.bioelectricDecay;
     }
 
-    // 2. Synchronize Cilia
     this.synchronizeCilia(bot, ciliaForcesX, ciliaForcesY);
 
-    // Apply Synced Cilia Forces
     for (let i = 0; i < pCount; i++) {
         particles[i].force.x += ciliaForcesX[i];
         particles[i].force.y += ciliaForcesY[i];
     }
     
-    // 3. Integrate
     this.integrateParticles(bot, dtSq, fluidBaseFriction);
   }
 
-  // Corresponds to "Material Event -> Absorption -> Conscious Experience"
   private performAbsorption(bot: Xenobot): number {
     let absorptionEvent = 0;
 
-    // 1. Sensory Input (Navigational Absorption)
-    // The bot "senses" food and adjusts heading. This is information absorption.
     const sensoryStrength = this.updateBotSensory(bot);
     if (sensoryStrength > 0) absorptionEvent += sensoryStrength * 0.5;
 
-    // 2. Consumption (Energy Absorption)
-    // Physical contact with food results in energy gain.
     const energyGained = this.checkFoodConsumption(bot);
-    if (energyGained > 0) absorptionEvent += 2.0; // High spike for eating
+    if (energyGained > 0) absorptionEvent += 2.0;
 
-    // 3. Environmental Stress (Pain Absorption)
-    // Hitting boundaries causes stress absorption.
     const distFromCenter = Math.abs(bot.centerOfMass.x);
     if (distFromCenter > BOUNDARY_LIMIT) {
-        bot.energy -= 0.8; // High environmental stress
-        
+        bot.energy -= 0.8; 
         const pushDir = -Math.sign(bot.centerOfMass.x);
         const overlap = distFromCenter - BOUNDARY_LIMIT;
         const pushForce = Math.min(2.0, overlap * 0.01);
         
         this.distributeForce(bot, pushDir * pushForce, 0);
-        absorptionEvent += 1.0; // Stress spike
+        absorptionEvent += 1.0; 
     }
 
     return absorptionEvent;
@@ -576,11 +687,6 @@ export class PhysicsEngine {
   }
 
   private calculateCiliaForce(bot: Xenobot, p: Particle, time: number, avgVx: number, avgVy: number) {
-      if (this.config.acousticFreq > 100) {
-          // Acoustic alignment override
-          return { cx: CILIA_FORCE, cy: 0 };
-      }
-
       const memory = bot.genome.bioelectricMemory || 0.5;
       const relX = (p.pos.x - bot.centerOfMass.x) * 0.05;
       const relY = (p.pos.y - bot.centerOfMass.y) * 0.05;
@@ -589,7 +695,6 @@ export class PhysicsEngine {
       const spatialPhase = p.phase + relX - relY;
       const beat = Math.sin(spatialPhase - (time * waveFreq * Math.PI * 2));
       
-      // Asymmetric Stroke
       const thrustMag = beat > 0 
           ? CILIA_FORCE * 2.0 * beat 
           : CILIA_FORCE * 0.5 * beat;
@@ -600,7 +705,6 @@ export class PhysicsEngine {
       let cx = thrustMag * hx;
       let cy = thrustMag * hy;
       
-      // Hydrodynamic Cohesion
       const pVx = p.pos.x - p.oldPos.x;
       const pVy = p.pos.y - p.oldPos.y;
       const cohesionStrength = 3.0 * memory; 
@@ -616,12 +720,11 @@ export class PhysicsEngine {
 
       return { cx, cy };
   }
-
+  
   private synchronizeCilia(bot: Xenobot, forcesX: Float32Array, forcesY: Float32Array) {
       const springs = bot.springs;
       const syncStrength = this.config.syncRate || 0.3;
       
-      // Neighbor Smoothing
       for (const s of springs) {
           const i1 = s.p1;
           const i2 = s.p2;
@@ -650,7 +753,6 @@ export class PhysicsEngine {
       const mSpeed = this.config.muscleSpeed;
       const plasticity = this.config.plasticity;
       
-      // 1. Viscous Coupling (Unified movement)
       const coupling = 0.2 + (memory * 0.3);
       for (const s of springs) {
           const p1 = particles[s.p1];
@@ -665,7 +767,6 @@ export class PhysicsEngine {
           p2.force.y += (avgFy - p2.force.y) * coupling;
       }
 
-      // 2. Spring Physics
       for (const s of springs) {
           const p1 = particles[s.p1];
           const p2 = particles[s.p2];
@@ -689,7 +790,6 @@ export class PhysicsEngine {
           const diff = (dist - targetLen) / dist;
           const forceVal = s.stiffness * diff;
 
-          // Bio-Electricity
           const stress = Math.abs(diff); 
           const chargeGen = stress * 0.6;
           if (chargeGen > 0.01) {
@@ -698,12 +798,17 @@ export class PhysicsEngine {
           }
           activeCharge += (p1.charge + p2.charge);
 
-          // Plasticity
-          if (stress > 0.15) {
-              s.currentRestLength += (dist - s.currentRestLength) * (plasticity * (0.2 + memory));
+          if (stress > 0.10 && stress < 0.6) {
+             const change = (dist - s.currentRestLength) * (plasticity * (0.2 + memory));
+             const newLength = s.currentRestLength + change;
+             const maxLen = s.restLength * 1.5;
+             const minLen = s.restLength * 0.5;
+             if (newLength > minLen && newLength < maxLen) {
+                 s.currentRestLength = newLength;
+             }
           } else {
-              const retention = memory * 0.8;
-              const forgettingRate = 0.003 + (1.0 - retention) * 0.005; 
+              const retention = memory * 0.95; 
+              const forgettingRate = 0.001 + (1.0 - retention) * 0.002; 
               s.currentRestLength += (s.restLength - s.currentRestLength) * forgettingRate;
           }
 
@@ -725,19 +830,15 @@ export class PhysicsEngine {
       let cx = 0, cy = 0;
 
       for (const p of particles) {
-          // Force Clamping
           p.force.x = Math.max(-MAX_FORCE, Math.min(MAX_FORCE, p.force.x));
           p.force.y = Math.max(-MAX_FORCE, Math.min(MAX_FORCE, p.force.y));
 
-          // Depth-based viscosity
           const depthVal = Math.max(0, Math.min(1, p.pos.y * invGroundY));
           const effectiveFriction = fluidBaseFriction * (1.0 - (depthVal * 0.03));
 
-          // Verlet Integration
           let vx = (p.pos.x - p.oldPos.x) * effectiveFriction;
           let vy = (p.pos.y - p.oldPos.y) * effectiveFriction;
 
-          // Velocity Clamping
           vx = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, vx));
           vy = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, vy));
 
@@ -747,13 +848,11 @@ export class PhysicsEngine {
           p.pos.x += vx + p.force.x * dtSq;
           p.pos.y += vy + p.force.y * dtSq;
 
-          // NaN Safety
           if (!Number.isFinite(p.pos.x) || !Number.isFinite(p.pos.y)) {
               p.pos.x = p.oldPos.x;
               p.pos.y = p.oldPos.y;
           }
 
-          // Boundary Constraints
           if (p.pos.y > this.groundY) {
               p.pos.y = this.groundY;
               const vy_impact = (p.pos.y - p.oldPos.y);

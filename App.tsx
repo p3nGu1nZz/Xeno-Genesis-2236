@@ -25,7 +25,6 @@ const App: React.FC = () => {
   // Simulation State
   const [generation, setGeneration] = useState(1);
   const [isRunning, setIsRunning] = useState(false);
-  const [acousticActive, setAcousticActive] = useState(false);
   const [evolutionProgress, setEvolutionProgress] = useState(0);
   
   // Genome Visibility State
@@ -41,9 +40,8 @@ const App: React.FC = () => {
   const botsRef = useRef<Xenobot[]>([]); 
   const foodRef = useRef<Food[]>([]);
   
-  // Track best genomes for each group independently
-  const [bestGenomeA, setBestGenomeA] = useState<Genome | null>(null);
-  const [bestGenomeB, setBestGenomeB] = useState<Genome | null>(null);
+  // Dynamic list of representative genomes for the panel
+  const [activeGenomeGroups, setActiveGenomeGroups] = useState<{name: string, genome: Genome | null, color: string}[]>([]);
   
   // Camera State
   const [camera, setCamera] = useState<CameraState>({ x: 0, y: 0, zoom: 0.55 });
@@ -131,23 +129,48 @@ const App: React.FC = () => {
       setEvolutionProgress(0);
   };
 
-  const updateBestGenomes = () => {
+  const updateGenomeGroups = () => {
     const engine = engineRef.current;
     if (!engine) return;
 
-    // Best A (Energy based)
-    const botsA = engine.bots.filter(b => b.groupId === 0);
-    if (botsA.length > 0) {
-        const bestA = botsA.reduce((prev, curr) => (curr.energy > prev.energy ? curr : prev));
-        setBestGenomeA(bestA.genome);
+    // Simple grouping strategy: Split by color hue ranges or ID prefix
+    // For now, we'll categorize by the original split logic (Cyan/Magenta) but handle new mutants dynamically
+    
+    // Group 0: Cyans (150-230 hue)
+    const natives = engine.bots.filter(b => {
+         const match = b.genome.color.match(/hsl\((\d+\.?\d*)/);
+         const hue = match ? parseFloat(match[1]) : 0;
+         return (hue > 150 && hue < 230);
+    });
+
+    // Group 1: Magentas (Everyone else)
+    const invaders = engine.bots.filter(b => {
+         const match = b.genome.color.match(/hsl\((\d+\.?\d*)/);
+         const hue = match ? parseFloat(match[1]) : 0;
+         return !(hue > 150 && hue < 230);
+    });
+
+    const groups = [];
+
+    if (natives.length > 0) {
+        const bestNative = natives.reduce((prev, curr) => (curr.energy > prev.energy ? curr : prev));
+        groups.push({
+            name: "NATIVE STRAIN (ALPHA)",
+            genome: bestNative.genome,
+            color: bestNative.genome.color
+        });
     }
 
-    // Best B (Energy based)
-    const botsB = engine.bots.filter(b => b.groupId === 1);
-    if (botsB.length > 0) {
-        const bestB = botsB.reduce((prev, curr) => (curr.energy > prev.energy ? curr : prev));
-        setBestGenomeB(bestB.genome);
+    if (invaders.length > 0) {
+        const bestInvader = invaders.reduce((prev, curr) => (curr.energy > prev.energy ? curr : prev));
+        groups.push({
+            name: "INVASIVE STRAIN (BETA)",
+            genome: bestInvader.genome,
+            color: bestInvader.genome.color
+        });
     }
+
+    setActiveGenomeGroups(groups);
   };
 
   const simulationLoop = (time: number) => {
@@ -175,7 +198,7 @@ const App: React.FC = () => {
           }
 
           if (totalTickRef.current % 30 === 0) {
-             updateBestGenomes();
+             updateGenomeGroups();
           }
       }
 
@@ -204,18 +227,23 @@ const App: React.FC = () => {
               setCamera(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
           }
       } 
-      // Auto Follow Logic
+      // Auto Follow Logic (Refined)
       else if (isAutoCameraRef.current && isRunning) {
-          const groupA = engine.bots.filter(b => b.groupId === 0 && !b.isDead);
+          // Filter for Group A (groupId === 0) for primary follow logic
+          const groupA = engine.bots.filter(b => !b.isDead && b.groupId === 0);
           
-          if (groupA.length > 0) {
+          // Fallback to any alive bots if Group A is extinct
+          const targetBots = groupA.length > 0 ? groupA : engine.bots.filter(b => !b.isDead);
+
+          if (targetBots.length > 0) {
               let avgX = 0, avgY = 0;
               let count = 0;
-              // Follow the highest energy bots (success bias)
-              const sorted = [...groupA].sort((a,b) => b.energy - a.energy);
-              const topHalf = sorted.slice(0, Math.max(1, Math.ceil(sorted.length / 2)));
+              
+              // Sort by energy to prioritize healthy individuals in the center
+              const sorted = [...targetBots].sort((a,b) => b.energy - a.energy);
+              const topView = sorted.slice(0, Math.min(5, sorted.length));
 
-              topHalf.forEach(b => { 
+              topView.forEach(b => { 
                   avgX += b.centerOfMass.x; 
                   avgY += b.centerOfMass.y; 
                   count++;
@@ -225,9 +253,14 @@ const App: React.FC = () => {
                   avgX /= count;
                   avgY /= count;
 
-                  const targetCamX = avgX + (dimensions.width * 0.15 / camera.zoom); 
+                  // TARGET: Keep group center at 40% of screen width (Left Side bias)
+                  // Offset = (0.5 - 0.4) * Width / Zoom = 0.1 * Width / Zoom
+                  const offset = (dimensions.width * 0.1) / camera.zoom;
+                  const targetCamX = avgX + offset; 
                   const targetCamY = avgY;
-                  const lerp = 0.05; 
+                  
+                  // Reduced lerp for smoother catch-up
+                  const lerp = 0.02; 
                   
                   setCamera(prev => ({
                       ...prev,
@@ -282,15 +315,19 @@ const App: React.FC = () => {
   };
 
   const handleAnalyze = async () => {
-     if (isAnalyzing || !bestGenomeA) return;
+     if (isAnalyzing || activeGenomeGroups.length === 0) return;
      setIsAnalyzing(true);
      
      const engine = engineRef.current;
      if (engine) {
-         const bot = engine.bots.find(b => b.genome.id === bestGenomeA.id);
-         if (bot) {
-             const result = await analyzeXenobot(bot);
-             setAnalysisResult(result);
+         // Analyze the top genome from the first group for now
+         const targetGenome = activeGenomeGroups[0].genome;
+         if (targetGenome) {
+            const bot = engine.bots.find(b => b.genome.id === targetGenome.id);
+            if (bot) {
+                const result = await analyzeXenobot(bot);
+                setAnalysisResult(result);
+            }
          }
      }
      setIsAnalyzing(false);
@@ -321,19 +358,11 @@ const App: React.FC = () => {
                 onAnalyze={handleAnalyze}
                 onOpenSettings={() => { setShowSettings(true); setIsRunning(false); }}
                 isAnalyzing={isAnalyzing}
-                onToggleAcoustic={() => {
-                    setAcousticActive(!acousticActive);
-                    setConfig(prev => ({...prev, acousticFreq: !acousticActive ? 300 : 0}));
-                    if (engineRef.current) engineRef.current.config.acousticFreq = !acousticActive ? 300 : 0;
-                }}
-                acousticActive={acousticActive}
                 isCollapsed={isSidebarCollapsed}
                 onToggleCollapse={() => setSidebarCollapsed(!isSidebarCollapsed)}
-                // We use these toggles to open the main Genome Panel now
-                showGenomeA={showGenomePanel}
-                onToggleGenomeA={() => setShowGenomePanel(!showGenomePanel)}
-                showGenomeB={showGenomePanel}
-                onToggleGenomeB={() => setShowGenomePanel(!showGenomePanel)}
+                // Single toggle for the new panel
+                showGenomePanel={showGenomePanel}
+                onToggleGenomePanel={() => setShowGenomePanel(!showGenomePanel)}
              />
           </div>
           
@@ -372,10 +401,7 @@ const App: React.FC = () => {
           </div>
 
           <GenomePanel 
-              genomes={[
-                  { name: "GROUP A (NATIVE)", genome: bestGenomeA, color: '#00f3ff' },
-                  { name: "GROUP B (INVADER)", genome: bestGenomeB, color: '#ff00ff' }
-              ]}
+              genomes={activeGenomeGroups}
               hidden={!showGenomePanel}
               onClose={() => setShowGenomePanel(false)}
           />

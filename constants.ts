@@ -16,7 +16,7 @@ export const DEFAULT_CONFIG: SimulationConfig = {
   muscleStrength: 0.45, // Increased strength for more vigorous movement
   muscleSpeed: 0.1, 
   groundHeight: 0, // Irrelevant in infinite top-down plane
-  gridScale: 100, // Increased from 85 for wider node spacing
+  gridScale: 60, // Reduced from 100 to 60 for more coherent, manageable bot sizes
   bioelectricDecay: 0.98,
   plasticity: 0.0005, 
   syncRate: 0.4, 
@@ -38,10 +38,10 @@ export const CONSTRAINT_ITERATIONS = 8;
 
 // Biological Constants based on papers
 export const CILIA_FORCE = 0.6; // Slight boost
-export const METABOLIC_DECAY = 0.01; 
-export const INITIAL_YOLK_ENERGY = 2000; 
-export const MITOSIS_THRESHOLD = 3000; 
+export const METABOLIC_DECAY = 0.2; // Increased to 0.2 to significantly drain energy
+export const INITIAL_YOLK_ENERGY = 800; // Drastically reduced starting energy
+export const MITOSIS_THRESHOLD = 25000; // Massive increase to prevent rapid breeding
 export const SURFACE_TENSION = 0.005; 
-export const FOOD_ENERGY = 600;
+export const FOOD_ENERGY = 250; // Reduced energy gain from food
 export const FOOD_RADIUS = 15;
 export const BREAKING_THRESHOLD = 150.0; // Tripled to effectively disable accidental breaking

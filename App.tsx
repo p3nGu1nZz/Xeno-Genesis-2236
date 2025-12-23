@@ -96,12 +96,18 @@ const App: React.FC = () => {
   const initSimulation = useCallback((cfg: SimulationConfig, startPop?: Genome[], startGen?: number) => {
     const engine = new PhysicsEngine(cfg);
     
-    let pop = startPop;
+    let pop = startPop ? [...startPop] : [];
     const currentGen = startGen || 1;
 
+    // Strict Population Cap Enforcement
+    if (pop.length > cfg.populationSize) {
+        pop = pop.slice(0, cfg.populationSize);
+    }
+
     // Population Initialization Strategy
-    if (!pop || pop.length === 0) {
+    if (pop.length < cfg.populationSize) {
         const totalSize = Math.max(2, cfg.populationSize);
+        // Force exactly 2 if config says so, otherwise split evenly
         const sizeA = Math.floor(totalSize / 2);
         const sizeB = totalSize - sizeA;
         
@@ -111,7 +117,7 @@ const App: React.FC = () => {
         // Group B: "Invaders" (Magenta/Red range ~340)
         const groupB = Array(sizeB).fill(null).map(() => createRandomGenome(currentGen, 340)); 
         
-        pop = [...groupA, ...groupB];
+        pop = [...pop, ...groupA, ...groupB].slice(0, cfg.populationSize);
     } 
 
     populationRef.current = pop;

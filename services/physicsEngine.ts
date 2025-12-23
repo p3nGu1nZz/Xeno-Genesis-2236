@@ -871,22 +871,29 @@ export class PhysicsEngine {
 
     // --- Distance-Based Energy Drain (Open World) ---
     // Instead of hard boundaries, the world exerts an entropy tax the further you go.
+    // This implements a "soft border" that kills wanderers who go too far.
     const cx = bot.centerOfMass.x;
     const cy = bot.centerOfMass.y;
     const distFromOrigin = Math.sqrt(cx*cx + cy*cy);
     
-    // Base survival cost + Distance Tax
-    // The scale determines how far they can go before it hurts. 
-    // 5000 units is "safe", beyond that it ramps up.
-    const SAFE_RADIUS = 5000;
+    // SAFE_RADIUS: Distance from origin (0,0) where standard metabolic decay applies.
+    // Beyond this, entropy scales quadratically.
+    const SAFE_RADIUS = 4500; 
+
     if (distFromOrigin > SAFE_RADIUS) {
         const excess = distFromOrigin - SAFE_RADIUS;
-        // Exponential decay for far-flung wanderers
-        const entropyTax = (excess / 1000.0) ** 1.5 * 0.05;
+        
+        // Quadratic Entropy Tax:
+        // Penalizes distance heavily. 
+        // e.g., 500 units out = 0.2 energy/tick
+        // e.g., 1000 units out = 0.8 energy/tick
+        const entropyTax = Math.pow(excess / 500.0, 2) * 0.2;
+        
         bot.energy -= entropyTax;
         
-        // Slight absorption bump as they sense the void
-        absorptionEvent += Math.min(1.0, entropyTax * 0.1);
+        // High entropy increases "Absorption" (Conscious Experience of the void)
+        // This triggers visual feedback (cyan aura)
+        absorptionEvent += Math.min(2.0, entropyTax * 0.2);
     }
 
     return absorptionEvent;

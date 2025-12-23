@@ -317,9 +317,9 @@ export class PhysicsEngine {
           const dvx = v2x - v1x;
           const dvy = v2y - v1y;
           
-          // UPDATED: Increased Damping Coefficient by 1.5x AGAIN
-          // Previous: 30.375 -> New: 45.5625
-          const dampingCoeff = 45.5625; 
+          // UPDATED: Increased Damping Coefficient by 1.2x
+          // Previous: 45.5625 -> New: 54.675
+          const dampingCoeff = 54.675; 
 
           p1.force.x += dvx * dampingCoeff;
           p1.force.y += dvy * dampingCoeff;
@@ -350,9 +350,9 @@ export class PhysicsEngine {
 
           const diff = (dist - targetLen) / dist;
           
-          // UPDATED: Increased Stiffness Multiplier by 1.5x AGAIN
-          // Previous: 60.75 -> New: 91.125
-          const forceVal = (s.stiffness * 91.125) * diff;
+          // UPDATED: Increased Stiffness Multiplier by 1.2x
+          // Previous: 91.125 -> New: 109.35
+          const forceVal = (s.stiffness * 109.35) * diff;
 
           const stress = Math.abs(diff); 
           const chargeGen = stress * 0.6;
@@ -463,8 +463,9 @@ export class PhysicsEngine {
         p.force.x = Math.max(-MAX_FORCE, Math.min(MAX_FORCE, p.force.x));
         p.force.y = Math.max(-MAX_FORCE, Math.min(MAX_FORCE, p.force.y));
 
-        let vx = (p.pos.x - p.oldPos.x) * friction;
-        let vy = (p.pos.y - p.oldPos.y) * friction;
+        // Increased damping by factor of 1.05 to reduce jitter
+        let vx = (p.pos.x - p.oldPos.x) * (friction / 1.05);
+        let vy = (p.pos.y - p.oldPos.y) * (friction / 1.05);
 
         vx = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, vx));
         vy = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, vy));

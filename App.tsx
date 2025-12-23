@@ -334,7 +334,7 @@ const App: React.FC = () => {
              const targetCamX = targetBot.centerOfMass.x + offsetX;
              const targetCamY = targetBot.centerOfMass.y;
              
-             const lerp = 0.05; 
+             const lerp = 0.1; 
              
              setCamera(prev => ({
                  ...prev,

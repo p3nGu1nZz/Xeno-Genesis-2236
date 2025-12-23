@@ -1,5 +1,6 @@
+
 import { PhysicsEngine } from './services/physicsEngine';
-import { createRandomGenome, evolvePopulation } from './services/geneticAlgorithm';
+import { createRandomGenome } from './services/geneticAlgorithm';
 import { SimulationConfig, Xenobot, Genome, WorkerMessage } from './types';
 import { DEFAULT_CONFIG, INITIAL_POPULATION_SIZE, EVOLUTION_INTERVAL } from './constants';
 
@@ -93,52 +94,7 @@ const initSimulation = (config: SimulationConfig, startPop?: Genome[], startGen?
 const evolveContinuous = () => {
     if (!engine) return;
     
-    const groups = [0, 1];
-    let evolutionOccurred = false;
-
-    groups.forEach(groupId => {
-        const groupBots = engine!.bots.filter(b => b.groupId === groupId);
-        const targetGroupSize = Math.floor(engine!.config.populationSize / 2);
-        
-        if (groupBots.length === 0) {
-            const newG = createRandomGenome(generation, groupId === 0 ? 190 : 340);
-            const parentPos = groupId === 0 ? 0 : 1200;
-            const bot = engine!.createBot(newG, parentPos, 200);
-            engine!.addBot(bot);
-            return;
-        }
-
-        // --- PROBABILISTIC REPRODUCTION ---
-        // 0.1% chance per check (running every 1 second)
-        if (Math.random() > 0.001) return;
-
-        groupBots.sort((a, b) => b.centerOfMass.x - a.centerOfMass.x);
-        
-        const needGrowth = groupBots.length < targetGroupSize;
-        
-        if (!needGrowth) {
-             const victim = groupBots[groupBots.length - 1];
-             engine!.removeBot(victim.id);
-        }
-
-        const parent1 = groupBots[0];
-        const parent2 = groupBots.length > 1 ? groupBots[1] : groupBots[0];
-        
-        const parents = [parent1.genome, parent2.genome];
-        const nextGenParams = evolvePopulation(parents, generation, 10);
-        const childGenome = nextGenParams[nextGenParams.length - 1];
-        
-        // Preserve positions by spawning child near parent and leaving everyone else alone
-        const spawnX = parent1.centerOfMass.x - 50 - Math.random() * 50; 
-        const spawnY = parent1.centerOfMass.y + (Math.random() - 0.5) * 50;
-        
-        childGenome.originX = spawnX; 
-
-        const childBot = engine!.createBot(childGenome, spawnX, spawnY);
-        engine!.addBot(childBot);
-        
-        evolutionOccurred = true;
-    });
+    const evolutionOccurred = engine.evolvePopulation(generation);
 
     if (evolutionOccurred) {
         generation++;

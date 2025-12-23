@@ -1,3 +1,4 @@
+
 import { Genome, CellType } from '../types';
 import { GRID_SIZE } from '../constants';
 
@@ -143,7 +144,7 @@ function crossover(parentA: Genome, parentB: Genome, generation: number): Genome
   };
 }
 
-function mutate(genome: Genome): Genome {
+export function mutate(genome: Genome): Genome {
   const newGenes = genome.genes.map(row => [...row]);
   let mutated = false;
   
@@ -198,6 +199,7 @@ function mutate(genome: Genome): Genome {
 
   return {
     ...genome,
+    id: Math.random().toString(36).substr(2, 9), // Ensure mutated clones have unique IDs
     genes: newGenes,
     bioelectricMemory: newMemory,
     color: mutated ? adjustColor(genome.color) : genome.color

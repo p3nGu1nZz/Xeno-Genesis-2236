@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { Genome, CellType } from '../types';
 import { Dna, Minus, GripHorizontal } from 'lucide-react';
@@ -22,7 +23,6 @@ export const GenomeVisualizer: React.FC<GenomeVisualizerProps> = ({
   const [position, setPosition] = useState(initialPosition);
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
-  const [isCollapsed, setIsCollapsed] = useState(false);
   
   // Drag Handlers
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -140,28 +140,13 @@ export const GenomeVisualizer: React.FC<GenomeVisualizerProps> = ({
     return { nodes, links, width: CONTAINER_SIZE, height: CONTAINER_SIZE };
   }, [genome]);
 
+  // If hidden is true, we render nothing, effectively "minimizing" to the parent controller
   if (hidden || !genome) return null;
-
-  // COLLAPSED VIEW (ICON)
-  if (isCollapsed) {
-      return (
-          <div 
-             className={`fixed z-40 bg-slate-900 border ${borderColor} rounded-full p-3 shadow-[0_0_15px_rgba(0,0,0,0.5)] cursor-pointer hover:scale-110 transition-transform`}
-             style={{ left: position.x, top: position.y }}
-             onMouseDown={handleMouseDown}
-             onClick={(e) => { 
-                 if (!isDragging) setIsCollapsed(false); 
-             }}
-          >
-             <Dna size={20} className="text-white" />
-          </div>
-      );
-  }
 
   // EXPANDED VIEW
   return (
     <div 
-        className={`fixed w-[240px] bg-slate-900/90 border ${borderColor} rounded-lg p-3 backdrop-blur shadow-2xl z-20 transition-opacity duration-300`}
+        className={`fixed w-[240px] bg-slate-900/90 border ${borderColor} rounded-lg p-3 backdrop-blur shadow-2xl z-20 transition-opacity duration-300 animate-in fade-in zoom-in-95 duration-200`}
         style={{ left: position.x, top: position.y }}
     >
       {/* Header / Drag Handle */}
@@ -175,17 +160,17 @@ export const GenomeVisualizer: React.FC<GenomeVisualizerProps> = ({
         </div>
         <button 
             onClick={() => {
-                setIsCollapsed(true);
                 onMinimize?.();
             }}
             className="text-slate-500 hover:text-white"
+            title="Minimize to Panel"
         >
             <Minus size={14} />
         </button>
       </div>
 
       {/* GRAPH RENDERER */}
-      <div className="relative w-full aspect-square bg-slate-950/60 rounded border border-slate-800/50 flex items-center justify-center overflow-hidden">
+      <div className="relative w-full aspect-square bg-slate-950/60 rounded border border-slate-800/50 flex items-center justify-center overflow-hidden pointer-events-none">
          <svg width="200" height="200" viewBox="0 0 200 200" className="overflow-visible">
             {/* Filters for Organic Glow */}
             <defs>

@@ -12,7 +12,7 @@ import { Xenobot, Genome, AnalysisResult, CameraState, SimulationConfig, SaveDat
 import { DEFAULT_CONFIG, INITIAL_POPULATION_SIZE, EVOLUTION_INTERVAL } from './constants';
 import { ScanEye, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { PhysicsEngine } from './services/physicsEngine';
-import { createRandomGenome, evolvePopulation } from './services/geneticAlgorithm';
+import { createRandomGenome } from './services/geneticAlgorithm';
 
 const App: React.FC = () => {
   // Application State
@@ -26,6 +26,11 @@ const App: React.FC = () => {
   const [generation, setGeneration] = useState(1);
   const [isRunning, setIsRunning] = useState(false);
   const [acousticActive, setAcousticActive] = useState(false);
+  const [evolutionProgress, setEvolutionProgress] = useState(0);
+  
+  // Genome Visibility State (Default Minimized/Hidden)
+  const [showGenomeA, setShowGenomeA] = useState(false);
+  const [showGenomeB, setShowGenomeB] = useState(false);
   
   // Simulation Engine State (Main Thread)
   const engineRef = useRef<PhysicsEngine | null>(null);
@@ -103,66 +108,23 @@ const App: React.FC = () => {
     engineRef.current = engine;
     botsRef.current = engine.bots;
     foodRef.current = engine.food;
+    evolutionTimerRef.current = 0;
+    setEvolutionProgress(0);
   }, []);
 
   const evolveContinuous = () => {
       const engine = engineRef.current;
       if (!engine) return;
       
-      const groups = [0, 1];
-      let evolutionOccurred = false;
-  
-      groups.forEach(groupId => {
-          const groupBots = engine.bots.filter(b => b.groupId === groupId);
-          const targetGroupSize = Math.floor(engine.config.populationSize / 2);
-          
-          if (groupBots.length === 0) {
-              const newG = createRandomGenome(generation, groupId === 0 ? 190 : 340);
-              const parentPos = groupId === 0 ? 0 : 1200;
-              const bot = engine.createBot(newG, parentPos, 200);
-              engine.addBot(bot);
-              return;
-          }
-  
-          // Probabilistic Reproduction Check
-          if (Math.random() > 0.005) return;
-  
-          // CHANGE: Sort by Energy (Survival of the Fittest = Best Foragers)
-          // Previously this was sorted by X position which caused "Rightward Bias"
-          groupBots.sort((a, b) => b.energy - a.energy);
-          
-          if (groupBots.length >= targetGroupSize) {
-               const victim = groupBots[groupBots.length - 1];
-               engine.removeBot(victim.id);
-          }
-  
-          const parent1 = groupBots[0];
-          const parent2 = groupBots.length > 1 ? groupBots[1] : groupBots[0];
-          
-          // Update fitness for the genetic algorithm helper
-          parent1.genome.fitness = parent1.energy;
-          parent2.genome.fitness = parent2.energy;
-          
-          const parents = [parent1.genome, parent2.genome];
-          const nextGenParams = evolvePopulation(parents, generation, 10);
-          const childGenome = nextGenParams[nextGenParams.length - 1];
-          
-          // Spawn near parent
-          const spawnX = parent1.centerOfMass.x - 50 - Math.random() * 50; 
-          const spawnY = parent1.centerOfMass.y + (Math.random() - 0.5) * 50;
-          
-          childGenome.originX = spawnX; 
-  
-          const childBot = engine.createBot(childGenome, spawnX, spawnY);
-          engine.addBot(childBot);
-          
-          evolutionOccurred = true;
-      });
+      const evolutionOccurred = engine.evolvePopulation(generation);
   
       if (evolutionOccurred) {
           setGeneration(g => g + 1);
           populationRef.current = engine.bots.map(b => b.genome);
       }
+      // Reset timer
+      evolutionTimerRef.current = 0;
+      setEvolutionProgress(0);
   };
 
   const updateBestGenomes = () => {
@@ -198,9 +160,14 @@ const App: React.FC = () => {
           totalTickRef.current += 1;
           evolutionTimerRef.current += 1;
 
+          // Update Progress Bar State (Throttled to every 4 ticks to save React overhead ~15fps update)
+          if (totalTickRef.current % 4 === 0) {
+              const progress = Math.min(1, evolutionTimerRef.current / EVOLUTION_INTERVAL);
+              setEvolutionProgress(progress);
+          }
+
           if (evolutionTimerRef.current >= EVOLUTION_INTERVAL) {
              evolveContinuous();
-             evolutionTimerRef.current = 0;
           }
 
           if (totalTickRef.current % 30 === 0) {
@@ -349,6 +316,7 @@ const App: React.FC = () => {
                 isRunning={isRunning}
                 generation={generation}
                 timeRemaining={0}
+                evolutionProgress={evolutionProgress}
                 onTogglePlay={() => setIsRunning(!isRunning)}
                 onAnalyze={handleAnalyze}
                 onOpenSettings={() => { setShowSettings(true); setIsRunning(false); }}
@@ -361,6 +329,10 @@ const App: React.FC = () => {
                 acousticActive={acousticActive}
                 isCollapsed={isSidebarCollapsed}
                 onToggleCollapse={() => setSidebarCollapsed(!isSidebarCollapsed)}
+                showGenomeA={showGenomeA}
+                onToggleGenomeA={() => setShowGenomeA(!showGenomeA)}
+                showGenomeB={showGenomeB}
+                onToggleGenomeB={() => setShowGenomeB(!showGenomeB)}
              />
           </div>
           
@@ -394,8 +366,22 @@ const App: React.FC = () => {
               </button>
           </div>
 
-          <GenomeVisualizer genome={bestGenomeA} label="GROUP A (NATIVE)" borderColor="border-neon-cyan" initialPosition={{x: 350, y: 30}} hidden={isSidebarCollapsed} onMinimize={() => {}} />
-          <GenomeVisualizer genome={bestGenomeB} label="GROUP B (INVADER)" borderColor="border-neon-magenta" initialPosition={{x: 350, y: 300}} hidden={isSidebarCollapsed} onMinimize={() => {}} />
+          <GenomeVisualizer 
+              genome={bestGenomeA} 
+              label="GROUP A (NATIVE)" 
+              borderColor="border-neon-cyan" 
+              initialPosition={{x: 350, y: 30}} 
+              hidden={!showGenomeA} 
+              onMinimize={() => setShowGenomeA(false)} 
+          />
+          <GenomeVisualizer 
+              genome={bestGenomeB} 
+              label="GROUP B (INVADER)" 
+              borderColor="border-neon-magenta" 
+              initialPosition={{x: 350, y: 300}} 
+              hidden={!showGenomeB} 
+              onMinimize={() => setShowGenomeB(false)} 
+          />
         </div>
       )}
     </>

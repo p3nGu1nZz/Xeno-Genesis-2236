@@ -1,10 +1,12 @@
 
 import { Xenobot, Particle, Spring, Genome, CellType, SimulationConfig, Food } from '../types';
 import { DEFAULT_CONFIG, TIMESTEP, CONSTRAINT_ITERATIONS, CILIA_FORCE, METABOLIC_DECAY, INITIAL_YOLK_ENERGY, SURFACE_TENSION, FOOD_COUNT, FOOD_ENERGY, FOOD_RADIUS } from '../constants';
+import { mutate } from './geneticAlgorithm';
 
 const uid = () => Math.random().toString(36).substr(2, 9);
 const MAX_FORCE = 10.0; // Prevent explosion
 const MAX_VELOCITY = 15.0; // Prevent infinite streaks
+const PARTICLE_MAINTENANCE_COST = 0.005; // Passive decay per particle
 
 export class PhysicsEngine {
   bots: Xenobot[] = [];
@@ -142,6 +144,45 @@ export class PhysicsEngine {
     };
   }
 
+  evolvePopulation(currentGeneration: number): boolean {
+      const MAX_SPAWNS = 3; 
+      let spawnCount = 0;
+      let evolutionOccurred = false;
+      const bots = this.bots;
+      const count = bots.length;
+
+      // Shuffle Start Index to avoid bias
+      const startIndex = Math.floor(Math.random() * count);
+
+      for(let i = 0; i < count; i++) {
+          if (spawnCount >= MAX_SPAWNS) break;
+          if (this.bots.length >= this.config.maxPopulationSize) break;
+
+          const idx = (startIndex + i) % count;
+          const parent = bots[idx];
+          
+          if (parent.isDead) continue;
+
+          // 1% Chance
+          if (Math.random() < 0.01) {
+             const childGenome = mutate(parent.genome);
+             childGenome.generation = currentGeneration + 1;
+             
+             // Spawn near parent
+             const spawnX = parent.centerOfMass.x + (Math.random() - 0.5) * 50;
+             const spawnY = parent.centerOfMass.y + (Math.random() - 0.5) * 50;
+             childGenome.originX = spawnX;
+             
+             const childBot = this.createBot(childGenome, spawnX, spawnY);
+             this.addBot(childBot);
+             
+             spawnCount++;
+             evolutionOccurred = true;
+          }
+      }
+      return evolutionOccurred;
+  }
+
   update(time: number) {
     const dt = TIMESTEP;
     const dtSq = dt * dt;
@@ -221,9 +262,10 @@ export class PhysicsEngine {
   
   smoothRenderPositions() {
     // Linear Interpolation (Lerp) factor for smoothing
-    // Lower value = smoother but more lag. 0.15 is a good balance.
-    const alpha = 0.15; 
-    const snapThresholdSq = 100 * 100; // Snap immediately if deviation is huge (e.g. teleport)
+    // We use a factor of 0.35 to balance smoothness (removing high-freq jitter)
+    // with responsiveness (avoiding "ghosting" or lag behind the actual physics body).
+    const alpha = 0.35; 
+    const snapThresholdSq = 50 * 50; // Snap immediately if deviation is huge (e.g. teleport/respawn)
     
     const botCount = this.bots.length;
     for (let i = 0; i < botCount; i++) {
@@ -248,11 +290,13 @@ export class PhysicsEngine {
             const distSq = dx*dx + dy*dy;
             
             // If the particle has moved too far in one frame (physics glitch or respawn), snap to it
+            // This prevents "streaking" artifacts across the screen.
             if (distSq > snapThresholdSq) {
                 p.renderPos.x = p.pos.x;
                 p.renderPos.y = p.pos.y;
             } else {
                 // Apply Lerp: current = current + (target - current) * alpha
+                // This interpolates the render position towards the physics position.
                 p.renderPos.x += dx * alpha;
                 p.renderPos.y += dy * alpha;
             }
@@ -370,7 +414,45 @@ export class PhysicsEngine {
     const sCount = springs.length;
     const invGroundY = 1.0 / (groundY || 1);
 
-    // Temp buffers for ciliary force synchronization
+    // --- 1. PHASE SYNCHRONIZATION (New Logic) ---
+    const phases = new Float32Array(pCount);
+    const waveFreq = 3.0 + (memory * 2.0);
+
+    // Initialize intrinsic phases based on position and time
+    for(let i=0; i<pCount; i++) {
+        const p = particles[i];
+        // Use relative position to allow wave to travel along body
+        const relX = (p.pos.x - bot.centerOfMass.x) * 0.05;
+        const relY = (p.pos.y - bot.centerOfMass.y) * 0.05;
+        // Base phase from topology + deformation + time
+        phases[i] = p.phase + relX - relY - (time * waveFreq * Math.PI * 2);
+    }
+
+    // Sync phases between neighbors (Kuramoto-like)
+    if (!acousticActive) {
+        for(let i=0; i<sCount; i++) {
+            const s = springs[i];
+            const i1 = s.p1;
+            const i2 = s.p2;
+
+            // We want to maintain the topological phase difference (traveling wave)
+            // but smooth out any jitter caused by deformation.
+            // Using the static genome phase difference as the "target" gradient.
+            const targetDiff = particles[i2].phase - particles[i1].phase;
+            let diff = phases[i2] - phases[i1];
+
+            // Wrap phase difference to -PI..PI
+            while (diff <= -Math.PI) diff += Math.PI * 2;
+            while (diff > Math.PI) diff -= Math.PI * 2;
+
+            const err = diff - targetDiff;
+            const correction = err * syncStrength * 0.5; // Shared correction
+
+            phases[i1] += correction;
+            phases[i2] -= correction;
+        }
+    }
+
     const ciliaForcesX = new Float32Array(pCount);
     const ciliaForcesY = new Float32Array(pCount);
 
@@ -388,6 +470,10 @@ export class PhysicsEngine {
     // Forces from Particles (Gravity, Cilia, Environment)
     for (let i = 0; i < pCount; i++) {
       const p = particles[i];
+      
+      // Passive metabolic cost for structure maintenance
+      bot.energy -= PARTICLE_MAINTENANCE_COST;
+      
       p.force.x = 0;
       p.force.y = gravity; 
 
@@ -413,16 +499,8 @@ export class PhysicsEngine {
           propX = CILIA_FORCE; 
           bot.heading = bot.heading * 0.95; // Decay heading to 0 (right)
       } else {
-          // Metachronal Wave Logic
-          const relX = (p.pos.x - bot.centerOfMass.x) * 0.05;
-          const relY = (p.pos.y - bot.centerOfMass.y) * 0.05;
-
-          const waveFreq = 3.0 + (memory * 2.0);
-          
-          // Spatial phase shift aligns movement
-          const spatialPhase = p.phase + relX - relY;
-          const currentPhase = spatialPhase - (time * waveFreq * Math.PI * 2);
-          
+          // Metachronal Wave Logic using SYNCHRONIZED PHASES
+          const currentPhase = phases[i];
           const beat = Math.sin(currentPhase);
           
           // Calculate Thrust Magnitude (Asymmetric stroke)
@@ -471,6 +549,7 @@ export class PhysicsEngine {
 
     // Synchronize Ciliary Forces (Neighbor Smoothing)
     // This allows adjacent cells to coordinate their strokes, creating better waves
+    // Keeping this as a second layer of smoothing for the force vectors themselves
     for (let i = 0; i < sCount; i++) {
         const s = springs[i];
         const i1 = s.p1;
@@ -633,3 +712,4 @@ export class PhysicsEngine {
       bot.centerOfMass.y = cy / pCount;
     }
   }
+}

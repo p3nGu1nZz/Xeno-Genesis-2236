@@ -1,12 +1,13 @@
 
 import React from 'react';
-import { Play, Pause, Zap, Activity, BrainCircuit, Settings, Volume2, VolumeX, PanelLeftClose, PanelLeftOpen, Cpu } from 'lucide-react';
+import { Play, Pause, Zap, Activity, Settings, Volume2, VolumeX, PanelLeftClose, PanelLeftOpen, Dna, Microscope } from 'lucide-react';
 import { SimulationConfig } from '../types';
 
 interface ControlsProps {
   isRunning: boolean;
   generation: number;
   timeRemaining: number;
+  evolutionProgress: number;
   onTogglePlay: () => void;
   onAnalyze: () => void;
   onOpenSettings: () => void;
@@ -15,11 +16,16 @@ interface ControlsProps {
   acousticActive: boolean;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
+  showGenomeA: boolean;
+  onToggleGenomeA: () => void;
+  showGenomeB: boolean;
+  onToggleGenomeB: () => void;
 }
 
 export const Controls: React.FC<ControlsProps> = ({
   isRunning,
   generation,
+  evolutionProgress,
   onTogglePlay,
   onAnalyze,
   onOpenSettings,
@@ -27,7 +33,11 @@ export const Controls: React.FC<ControlsProps> = ({
   onToggleAcoustic,
   acousticActive,
   isCollapsed,
-  onToggleCollapse
+  onToggleCollapse,
+  showGenomeA,
+  onToggleGenomeA,
+  showGenomeB,
+  onToggleGenomeB
 }) => {
   return (
     <div 
@@ -64,6 +74,23 @@ export const Controls: React.FC<ControlsProps> = ({
                 <Settings size={20} />
             </button>
 
+            <div className="flex flex-col gap-2 w-full px-2">
+                 <button 
+                   onClick={onToggleGenomeA}
+                   className={`p-2 rounded transition-all ${showGenomeA ? 'text-neon-cyan bg-neon-cyan/10 border border-neon-cyan/50' : 'text-slate-600 border border-transparent'}`}
+                   title="Toggle Genome A"
+                 >
+                   <Dna size={18} />
+                 </button>
+                 <button 
+                   onClick={onToggleGenomeB}
+                   className={`p-2 rounded transition-all ${showGenomeB ? 'text-neon-magenta bg-neon-magenta/10 border border-neon-magenta/50' : 'text-slate-600 border border-transparent'}`}
+                   title="Toggle Genome B"
+                 >
+                   <Dna size={18} />
+                 </button>
+            </div>
+
             <div className="mt-auto flex flex-col gap-4 mb-4">
                  <button 
                     onClick={onToggleAcoustic}
@@ -83,7 +110,7 @@ export const Controls: React.FC<ControlsProps> = ({
                 XENO<br/>GENESIS
             </h1>
             <div className="text-xs font-mono text-slate-400 tracking-widest mb-4">
-                VER 2236.4.1 // TUFTS_ARCHIVE
+                VER 2236.4.2 // TUFTS_ARCHIVE
             </div>
 
             <div className="flex gap-2 mb-6">
@@ -108,11 +135,49 @@ export const Controls: React.FC<ControlsProps> = ({
 
             <div className="space-y-4 font-mono">
                 <div className="bg-slate-950 p-4 rounded border border-slate-800 relative overflow-hidden group">
-                <div className="absolute top-0 right-0 p-2 opacity-20 group-hover:opacity-40 transition-opacity">
-                    <Zap size={40} className="text-yellow-500"/>
+                    {/* Progress Bar */}
+                    <div className="absolute top-0 left-0 w-full h-1 bg-slate-800">
+                        <div 
+                           className="h-full bg-neon-cyan shadow-[0_0_10px_#00f3ff]" 
+                           style={{ width: `${(1 - evolutionProgress) * 100}%`, transition: 'width 0.1s linear' }}
+                        ></div>
+                    </div>
+
+                    <div className="absolute top-0 right-0 p-2 opacity-20 group-hover:opacity-40 transition-opacity">
+                        <Zap size={40} className="text-yellow-500"/>
+                    </div>
+                    <div className="text-slate-500 text-xs uppercase mb-1 mt-1">Evolution Cycle</div>
+                    <div className="text-4xl text-white font-display">{generation.toString().padStart(4, '0')}</div>
+                    <div className="flex justify-between items-end mt-2">
+                         <span className="text-[10px] text-slate-500">NEXT MUTATION</span>
+                         <span className="text-xs text-neon-cyan font-bold">{Math.floor((1 - evolutionProgress) * 100)}%</span>
+                    </div>
                 </div>
-                <div className="text-slate-500 text-xs uppercase mb-1">Evolution Cycle</div>
-                <div className="text-4xl text-white font-display">{generation.toString().padStart(4, '0')}</div>
+
+                {/* Genome Monitors */}
+                <div className="grid grid-cols-2 gap-3">
+                    <button 
+                        onClick={onToggleGenomeA}
+                        className={`p-3 rounded border flex flex-col items-center gap-2 transition-all ${
+                            showGenomeA 
+                            ? 'bg-neon-cyan/10 border-neon-cyan/50 text-neon-cyan' 
+                            : 'bg-slate-950 border-slate-800 text-slate-500 hover:border-slate-600'
+                        }`}
+                    >
+                        <Dna size={20} />
+                        <span className="text-[10px] font-bold">GROUP A</span>
+                    </button>
+                    <button 
+                        onClick={onToggleGenomeB}
+                        className={`p-3 rounded border flex flex-col items-center gap-2 transition-all ${
+                            showGenomeB 
+                            ? 'bg-neon-magenta/10 border-neon-magenta/50 text-neon-magenta' 
+                            : 'bg-slate-950 border-slate-800 text-slate-500 hover:border-slate-600'
+                        }`}
+                    >
+                        <Dna size={20} />
+                        <span className="text-[10px] font-bold">GROUP B</span>
+                    </button>
                 </div>
 
                 {/* Acoustic Stimulation Control */}

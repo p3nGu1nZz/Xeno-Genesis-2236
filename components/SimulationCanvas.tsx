@@ -16,7 +16,7 @@ const FS_SOURCE = `
   precision mediump float;
   uniform vec2 u_resolution;
   uniform float u_time;
-  uniform vec4 u_particles[${MAX_PARTICLES}]; // x, y, charge, memory
+  uniform vec4 u_particles[${MAX_PARTICLES}]; // x, y, intensity, memory
   uniform int u_count;
   uniform vec2 u_offset; 
   uniform float u_zoom;
@@ -30,14 +30,14 @@ const FS_SOURCE = `
   float noise(vec2 p) {
     vec2 i = floor(p);
     vec2 f = fract(p);
-    // Optimization: Linear interpolation instead of Hermite cubic for performance
-    // f = f * f * (3.0 - 2.0 * f);
+    // Optimization: Hermite cubic interpolation for better visuals
+    f = f * f * (3.0 - 2.0 * f);
     return mix(mix(hash(i + vec2(0.0, 0.0)), hash(i + vec2(1.0, 0.0)), f.x),
                mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
   }
 
   float fbm(vec2 p) {
-      // Optimization: Single iteration noise instead of loop
+      // Optimization: Single iteration noise for performance, but with smooth interpolation
       return noise(p);
   }
 
@@ -55,20 +55,15 @@ const FS_SOURCE = `
         vec2 diff = (uv - p_uv);
         diff.x *= aspect;
         
-        // Optimization: Use dot product for squared distance to avoid expensive sqrt()
+        // Optimization: Use dot product for squared distance
         float distSq = dot(diff, diff);
         
-        float charge = p.z;
+        // Intensity is pre-calculated in JS to save sin() calls per pixel
+        float intensity = p.z; 
         float memory = p.w;
         
-        if (charge > 0.01) {
-            float pulseFrequency = 0.2 + (1.0 - charge) * 4.0; 
-            float pulseDepth = 0.3 + charge * 0.6; 
-            
-            float pulse = 1.0 - pulseDepth * (0.5 + 0.5 * sin(u_time * pulseFrequency));
-            
-            float intensity = charge * pulse * 0.12; 
-            
+        // Optimization: Cull very low intensity influences
+        if (intensity > 0.001) {
             // Use distSq directly in falloff calculation
             float contrib = (intensity * 0.002) / (distSq + 0.0001);
             contrib = min(contrib, 0.8); 
@@ -89,7 +84,7 @@ const FS_SOURCE = `
     ) * field * 0.15; 
 
     vec2 worldUV = (gl_FragCoord.xy / u_zoom) - u_offset + flowOffset;
-    // Adjusted scale since we only have 1 layer of noise now
+    
     float n = fbm(worldUV * 0.003 + vec2(u_time * 0.1, u_time * 0.05));
     float flow = field * (0.5 + 0.5 * n);
     
@@ -358,6 +353,9 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foodRef, w
         const zoom = camera.zoom;
         const camX = camera.x;
         const camY = camera.y;
+        
+        // Calculate Time for Pulse
+        const time = (Date.now() - startTimeRef.current) / 1000;
 
         const candIndices = candidateIndicesRef.current;
         const candCharges = candidateChargesRef.current;
@@ -398,9 +396,16 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foodRef, w
             const screenX = (p.renderPos.x - camX) * zoom + cx;
             const screenY = (p.renderPos.y - camY) * zoom + cy;
             
+            // Calculate pulse intensity on CPU to save GPU cycles in the loop
+            const charge = p.charge;
+            const pulseFreq = 0.2 + (1.0 - charge) * 4.0;
+            const pulseDepth = 0.3 + charge * 0.6;
+            const pulse = 1.0 - pulseDepth * (0.5 + 0.5 * Math.sin(time * pulseFreq));
+            const intensity = charge * pulse * 0.12;
+            
             data[k*4] = screenX;
             data[k*4+1] = screenY;
-            data[k*4+2] = p.charge;
+            data[k*4+2] = intensity; // Pass calculated intensity instead of raw charge
             data[k*4+3] = bot.genome.bioelectricMemory;
         }
 
@@ -412,7 +417,7 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ botsRef, foodRef, w
         const uOffset = gl.getUniformLocation(program, 'u_offset');
 
         gl.uniform2f(uRes, width, height);
-        gl.uniform1f(uTime, (Date.now() - startTimeRef.current) / 1000);
+        gl.uniform1f(uTime, time);
         gl.uniform1i(uCount, candCount);
         gl.uniform4fv(uParticles, data); 
         gl.uniform1f(uZoom, camera.zoom);

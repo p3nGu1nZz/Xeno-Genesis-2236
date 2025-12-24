@@ -328,7 +328,7 @@ const App: React.FC = () => {
           isAutoCameraRef.current = false;
           lastInputTimeRef.current = now;
           setFollowingBotId(null);
-          // Reset spring velocity to prevent momentum glitch when switching from manual to auto
+          // Reset velocity
           cameraVelRef.current = { x: 0, y: 0 };
           
           let dx = 0, dy = 0;
@@ -350,7 +350,6 @@ const App: React.FC = () => {
           // 1. If following a specific selected bot
           if (followingBotId) {
              targetBot = engine.bots.find(b => b.id === followingBotId && !b.isDead);
-             // If selected bot died, fall back to default behavior below
           }
           
           // 2. Default Behavior: Follow Leader of Group A (Natives)
@@ -367,7 +366,6 @@ const App: React.FC = () => {
 
           if (targetBot) {
              // Calculate Visual Center of Mass from smoothed render positions
-             // This ensures the camera tracks the visual representation, not the jittery physics body
              let visualX = 0, visualY = 0;
              const pCount = targetBot.particles.length;
              
@@ -389,14 +387,6 @@ const App: React.FC = () => {
              const targetCamX = visualX + offsetX;
              const targetCamY = visualY;
              
-             // Hybrid Smoothing: Matches the bot particle smoothing in physicsEngine.ts
-             // 1. Damped Spring for organic, fluid-like motion.
-             // 2. Low-Pass Filter (LERP) for micro-movement stabilization.
-             
-             // Tuned for "Heavy" Cinematic Feel
-             const springK = 0.02; // Very lazy spring
-             const springD = 0.95; // High damping
-
              const dx = targetCamX - camera.x;
              const dy = targetCamY - camera.y;
              const distSq = dx*dx + dy*dy;
@@ -405,36 +395,18 @@ const App: React.FC = () => {
              if (distSq > 1000000) {
                  setCamera(prev => ({...prev, x: targetCamX, y: targetCamY}));
                  cameraVelRef.current = { x: 0, y: 0 };
-             } 
-             // Micro-movement stabilizer (Low Pass Filter) for when camera is very close to target
-             // Tighter threshold (0.5) ensures settling happens only when practically stopped
-             else if (distSq < 0.5) {
-                 const lerpFactor = 0.05; // Slower settle
-                 setCamera(prev => ({
-                     ...prev,
-                     x: prev.x + dx * lerpFactor,
-                     y: prev.y + dy * lerpFactor
-                 }));
-                 // Kill velocity to prevent oscillation around 0
-                 cameraVelRef.current.x *= 0.8;
-                 cameraVelRef.current.y *= 0.8;
-             } 
-             // Standard Damped Spring Physics
-             else {
-                 // 1. Calculate Acceleration (Hooke's Law: F = -kx)
-                 const ax = dx * springK;
-                 const ay = dy * springK;
+             } else {
+                 // Hybrid Smoothing: Use simple LERP for camera to ensure stability and no overshoot
+                 const lerpBase = 0.08;
+                 const distFactor = Math.min(1.0, Math.sqrt(distSq) / 500.0); // Increase speed if far away
+                 const alpha = lerpBase + distFactor * 0.2; // 0.08 to 0.28 range
 
-                 // 2. Update Velocity (Semi-implicit Euler)
-                 cameraVelRef.current.x = (cameraVelRef.current.x + ax) * springD;
-                 cameraVelRef.current.y = (cameraVelRef.current.y + ay) * springD;
-                 
-                 // 3. Update Position
                  setCamera(prev => ({
                      ...prev,
-                     x: prev.x + cameraVelRef.current.x,
-                     y: prev.y + cameraVelRef.current.y,
+                     x: prev.x + dx * alpha,
+                     y: prev.y + dy * alpha,
                  }));
+                 cameraVelRef.current = { x: 0, y: 0 };
              }
           }
       }

@@ -56,7 +56,9 @@ const FS_SOURCE = `
     // Scale field physics with zoom
     float zoomScale = max(0.1, u_zoom);
     // Tighter base radius for a concise, localized field effect
-    float radiusBase = 8.0 * zoomScale; 
+    // Reduced size and reduced zoom impact (power < 1.0)
+    // Updated: Increased radius slightly for more "glow"
+    float radiusBase = 6.0 * pow(zoomScale, 0.85); 
     float radiusSq = radiusBase * radiusBase;
     
     float field = 0.0;
@@ -87,12 +89,12 @@ const FS_SOURCE = `
     
     vec2 worldUV = (gl_FragCoord.xy / u_zoom) + u_offset;
 
-    // Steady Distortion (Subtle heat haze, very slow)
-    // Slower frequency (0.005) for steady-state look
-    float distortNoise = noise(worldUV * 0.005 + vec2(u_time * 0.02)); 
+    // Dynamic Distortion (Heat Haze + Electric flux)
+    // Increased frequency and intensity for a more active field look
+    float distortNoise = noise(worldUV * 0.008 + vec2(u_time * 0.05)); 
     // Intensity heavily scaled by field strength
     // Increased distortion scaling for enhanced visual effect
-    vec2 distortedUV = worldUV + vec2(distortNoise) * field * 80.0; 
+    vec2 distortedUV = worldUV + vec2(distortNoise) * field * 120.0; 
 
     // Electric arcs / filaments on distorted UVs - Slower animation
     float n = fbm(distortedUV * 0.005 + vec2(0.0, u_time * 0.02));
@@ -146,7 +148,7 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
   height, 
   groundY, 
   camera, 
-  followingBotId,
+  followingBotId, 
   isRunning 
 }) => {
   const canvas2dRef = useRef<HTMLCanvasElement>(null);

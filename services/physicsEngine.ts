@@ -27,8 +27,8 @@ import {
 import { evolvePopulation as algoEvolve, mutate, pruneGenome } from './geneticAlgorithm';
 
 const uid = () => Math.random().toString(36).substr(2, 9);
-const MAX_FORCE = 15.0;
-const MAX_VELOCITY = 20.0;
+const MAX_FORCE = 60.0; 
+const MAX_VELOCITY = 40.0;
 const PARTICLE_MAINTENANCE_COST = 0.005; 
 
 export class PhysicsEngine {
@@ -47,9 +47,8 @@ export class PhysicsEngine {
   public spawnFood() {
     const currentCount = this.food.length;
     const needed = this.config.foodCount - currentCount;
-    const range = 8000; // Significantly expanded world size
+    const range = 8000; 
 
-    // Uniformly scatter food to avoid confusion with bot clusters
     for (let i = 0; i < needed; i++) {
       this.food.push({
         id: uid(),
@@ -67,10 +66,8 @@ export class PhysicsEngine {
     const scale = this.config.gridScale || 60;
     const size = genome.gridSize;
 
-    // Temporary map to track particle indices during creation
     const particleMap: number[][] = Array(size).fill(null).map(() => Array(size).fill(-1));
 
-    // 1. Create Particles
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
         const cellType = genome.genes[y][x];
@@ -78,10 +75,10 @@ export class PhysicsEngine {
            const px = startX + (x - size/2) * scale;
            const py = startY + (y - size/2) * scale;
            
-           // Variable mass based on cell type for realistic physics
-           let mass = 1.2;
-           if (cellType === CellType.HEART) mass = 1.5; // Denser muscle
-           if (cellType === CellType.NEURON) mass = 0.8; // Lighter neuron
+           // Heavier mass stabilizes PBD jitter
+           let mass = 1.0; 
+           if (cellType === CellType.HEART) mass = 1.5; 
+           if (cellType === CellType.NEURON) mass = 1.2; 
 
            particles.push({
              pos: { x: px, y: py },
@@ -99,7 +96,6 @@ export class PhysicsEngine {
       }
     }
 
-    // 2. Create Springs
     const neighbors = [
         { dx: 1, dy: 0, dist: 1 },
         { dx: 0, dy: 1, dist: 1 },
@@ -125,14 +121,17 @@ export class PhysicsEngine {
                     const isMuscle = (type1 === CellType.HEART || type2 === CellType.HEART);
                     const isNeuron = (type1 === CellType.NEURON || type2 === CellType.NEURON);
                     
-                    let stiffness = 2.0;
+                    // Balanced Stiffness Settings
+                    // 0.3 for muscle (soft but firm)
+                    // 0.6 for neuron (structural)
+                    let stiffness = 0.3; 
+                    
                     if (type1 === CellType.NEURON && type2 === CellType.NEURON) {
-                        // High stiffness with organic variability (Random factor added)
-                        stiffness = 5.0 + (Math.random() * 3.0 - 1.5); 
+                        stiffness = 0.6; // Structural Spine
                     } else if (isNeuron) {
-                        stiffness = 3.5;
+                        stiffness = 0.45;
                     } else if (isMuscle) {
-                        stiffness = 3.0;
+                        stiffness = 0.3; // Active tissue
                     }
 
                     springs.push({
@@ -180,8 +179,6 @@ export class PhysicsEngine {
   public update(totalTime: number) {
     this.events = [];
     
-    // We use a fixed timestep for physics stability, but the dt passed in is used for scaling if needed.
-    // Here we mainly rely on internal force calculations.
     const dtSq = TIMESTEP * TIMESTEP;
     const botCount = this.bots.length;
 
@@ -209,24 +206,24 @@ export class PhysicsEngine {
 
         // --- PHYSICS INTEGRATION ---
         
-        // A. Internal Structure (Muscles, Stiffness, Damping)
+        // A. Update Structure & Apply Internal Damping
         const activeCharge = this.updateInternalStructure(bot, totalTime);
         bot.totalCharge = activeCharge;
 
-        // B. External Forces (Fluid, Cilia, Gravity)
-        this.performMaterialPhysics(bot, totalTime, TIMESTEP, dtSq);
+        // B. External Forces & Verlet Integration
+        this.applyExternalForcesAndIntegrate(bot, totalTime, dtSq);
 
-        // C. Sensory & Consumption
-        const sensoryInput = 0; // Placeholder for now
+        // C. PBD Constraint Solving (Shape Retention)
+        this.resolveConstraints(bot);
+
+        // D. Sensory & Consumption
         const energyGained = this.checkFoodConsumption(bot);
         
-        // Calculate Irruption (Will) and Absorption (Sensation)
-        // Irruption is based on active bioelectric activity
+        // Stats
         bot.irruption = Math.min(1.0, activeCharge * 0.1);
-        // Absorption is based on energy intake and sensory events
-        bot.absorption = Math.min(1.0, sensoryInput + (energyGained > 0 ? 0.5 : 0));
+        bot.absorption = Math.min(1.0, (energyGained > 0 ? 0.5 : 0));
 
-        // Mitosis Check
+        // Mitosis
         if (bot.energy > MITOSIS_THRESHOLD && 
             bot.age > 800 && 
             (botCount + newBots.length) < maxBots &&
@@ -252,13 +249,9 @@ export class PhysicsEngine {
   private checkFoodConsumption(bot: Xenobot): number {
       let energyGained = 0;
       const scale = this.config.gridScale || 60;
-      // Broadphase optimization: Max potential radius of bot + buffer
-      // (Half Grid * Scale * Diagonal Factor) + Buffer
       const maxRadius = (GRID_SIZE / 2) * scale * 1.5 + 100;
       const broadphaseSq = maxRadius * maxRadius;
-      
-      // Interaction radius for eating (Food Radius 15 + Particle Radius ~8 + Tolerance)
-      const eatDistSq = 900; // 30px radius squared
+      const eatDistSq = 900; 
 
       for (let i = this.food.length - 1; i >= 0; i--) {
           const f = this.food[i];
@@ -266,16 +259,12 @@ export class PhysicsEngine {
           const dy = bot.centerOfMass.y - f.y;
           const dSq = dx*dx + dy*dy;
           
-          // Broadphase: Skip if food is clearly out of range
           if (dSq > broadphaseSq) continue;
           
           let consumed = false;
-
-          // 1. Check Center of Mass (Fast check for dense/small bots)
           if (dSq < eatDistSq) { 
               consumed = true;
           } else {
-              // 2. Check Individual Particles (Accurate collision for morphology)
               for (let j = 0; j < bot.particles.length; j++) {
                   const p = bot.particles[j];
                   const pdx = p.pos.x - f.x;
@@ -298,172 +287,130 @@ export class PhysicsEngine {
   }
 
   private performMitosis(bot: Xenobot): Xenobot | null {
-      // Simple splitting logic
       bot.energy /= 2;
       this.events.push('MITOSIS');
-      
       let childGenome = mutate(bot.genome);
-      // Child starts as a small "seed" (1/10th size roughly, minimum 3 nodes)
       childGenome = pruneGenome(childGenome, 0.15);
-
       const offset = 60;
       const child = this.createBot(childGenome, bot.centerOfMass.x + offset, bot.centerOfMass.y + offset);
-      
-      // Keep group ID for colony cohesion
       child.groupId = bot.groupId;
-      child.energy = bot.energy; // Inherits half energy
-      
+      child.energy = bot.energy; 
       return child;
   }
 
   private updateInternalStructure(bot: Xenobot, time: number): number {
       let activeCharge = 0;
-      const particles = bot.particles;
       const springs = bot.springs;
-      const memory = bot.genome.bioelectricMemory || 0.5;
+      const particles = bot.particles;
       const mStrength = this.config.muscleStrength;
       const mSpeed = this.config.muscleSpeed;
-      const plasticity = this.config.plasticity;
+      const chargeLimit = 200.0; // Increased limit for more intense fields
       
-      // COHESION: High coupling for rigid lattice
-      const coupling = 0.9 + (memory * 0.1); 
-
-      // 1. Internal Repulsion (Self-Collision Prevention)
-      const SELF_NODE_RADIUS_SQ = 6 * 6; 
-      
-      for (let i = 0; i < particles.length; i++) {
-          for (let j = i + 1; j < particles.length; j++) {
-              const p1 = particles[i];
-              const p2 = particles[j];
-              const dx = p1.pos.x - p2.pos.x;
-              const dy = p1.pos.y - p2.pos.y;
-              const dSq = dx*dx + dy*dy;
-              if (dSq < SELF_NODE_RADIUS_SQ && dSq > 0.001) {
-                  const dist = Math.sqrt(dSq);
-                  const overlap = 6 - dist; 
-                  const force = overlap * 2.0; 
-                  const nx = dx / dist;
-                  const ny = dy / dist;
-                  
-                  p1.force.x += nx * force;
-                  p1.force.y += ny * force;
-                  p2.force.x -= nx * force;
-                  p2.force.y -= ny * force;
-              }
-          }
-      }
-
-      // 2. Force Smoothing (Neighbor Coupling)
-      for (const s of springs) {
-          const p1 = particles[s.p1];
-          const p2 = particles[s.p2];
-          
-          const avgFx = (p1.force.x + p2.force.x) * 0.5;
-          const avgFy = (p1.force.y + p2.force.y) * 0.5;
-
-          p1.force.x += (avgFx - p1.force.x) * coupling;
-          p1.force.y += (avgFy - p1.force.y) * coupling;
-          p2.force.x += (avgFx - p2.force.x) * coupling;
-          p2.force.y += (avgFy - p2.force.y) * coupling;
-          p2.force.x += (avgFx - p2.force.x) * coupling;
-          p2.force.y += (avgFy - p2.force.y) * coupling;
-      }
-
-      // 3. Merged Damping & Spring Forces (Optimized)
-      // Tuning constants for stable, smooth motion
-      const dampingFactor = 100.0; 
-      const stiffnessFactor = 120.0;
-      
-      const chargeLimit = 100.0; // Increased charge cap for high intensity
       const decayFactor = METABOLIC_DECAY * 0.1;
 
       for (const s of springs) {
           const p1 = particles[s.p1];
           const p2 = particles[s.p2];
 
-          const dx = p2.pos.x - p1.pos.x;
-          const dy = p2.pos.y - p1.pos.y;
-          const distSq = dx * dx + dy * dy;
-
-          if (distSq < 0.0001) continue;
-
-          // --- Damping Logic ---
-          const v1x = p1.pos.x - p1.oldPos.x;
-          const v1y = p1.pos.y - p1.oldPos.y;
-          const v2x = p2.pos.x - p2.oldPos.x;
-          const v2y = p2.pos.y - p2.oldPos.y;
-
-          const dvx = v2x - v1x;
-          const dvy = v2y - v1y;
-          
-          const dampX = dvx * dampingFactor;
-          const dampY = dvy * dampingFactor;
-
-          p1.force.x += dampX;
-          p1.force.y += dampY;
-          p2.force.x -= dampX;
-          p2.force.y -= dampY;
-
-          // --- Spring Force Logic ---
-          const dist = Math.sqrt(distSq);
-
-          let targetLen = s.currentRestLength;
+          // 1. Update Resting Length (Muscle Actuation)
           if (s.isMuscle) {
               bot.energy -= decayFactor;
               const avgCharge = (p1.charge + p2.charge) * 0.5;
               const freqMod = 1.0 + avgCharge * 4.0; 
+              
               const contraction = Math.sin(time * mSpeed * freqMod + (s.phaseOffset || 0));
-              targetLen = s.currentRestLength * (1 + contraction * mStrength);
+              
+              // Modulate rest length
+              s.currentRestLength = s.restLength * (1.0 + contraction * mStrength * 0.4);
+          } else {
+              s.currentRestLength = s.restLength;
           }
 
-          const diff = (dist - targetLen) / dist;
+          // 2. Charge Generation (Piezoelectric)
+          const dx = p1.pos.x - p2.pos.x;
+          const dy = p1.pos.y - p2.pos.y;
+          const distSq = dx*dx + dy*dy;
+          const currLen = Math.sqrt(distSq);
           
-          // Optimized Hooke's Law
-          const forceVal = (s.stiffness * stiffnessFactor) * diff;
-
-          const stress = Math.abs(diff); 
-          // Increased charge generation multiplier for visual impact
-          const chargeGen = stress * 15.0; 
-          
-          if (chargeGen > 0.005) {
-              p1.charge = Math.min(chargeLimit, p1.charge + chargeGen);
-              p2.charge = Math.min(chargeLimit, p2.charge + chargeGen);
+          const strain = Math.abs(currLen - s.currentRestLength) / s.currentRestLength;
+          if (strain > 0.05) {
+             const chargeGen = strain * 10.0; // Increased generation for more visual impact
+             p1.charge = Math.min(chargeLimit, p1.charge + chargeGen);
+             p2.charge = Math.min(chargeLimit, p2.charge + chargeGen);
           }
           activeCharge += (p1.charge + p2.charge);
 
-          // Plasticity (Structural Adaptation)
-          if (stress > 0.10 && stress < 0.6) {
-             const change = (dist - s.currentRestLength) * (plasticity * (0.2 + memory));
-             const newLength = s.currentRestLength + change;
-             // Clamp limits
-             if (newLength > s.restLength * 0.5 && newLength < s.restLength * 1.5) {
-                 s.currentRestLength = newLength;
-             }
-          } else {
-              const retention = memory * 0.95; 
-              const forgettingRate = 0.001 + (1.0 - retention) * 0.002; 
-              s.currentRestLength += (s.restLength - s.currentRestLength) * forgettingRate;
+          // 3. Internal Damping (Shock Absorber)
+          // Prevents PBD jitter by applying velocity-based resistance
+          if (distSq > 0.0001) {
+              const v1x = p1.pos.x - p1.oldPos.x;
+              const v1y = p1.pos.y - p1.oldPos.y;
+              const v2x = p2.pos.x - p2.oldPos.x;
+              const v2y = p2.pos.y - p2.oldPos.y;
+              
+              const nx = dx / currLen;
+              const ny = dy / currLen;
+
+              // Relative velocity projected onto spring axis
+              const vRel = (v2x - v1x) * nx + (v2y - v1y) * ny;
+              
+              // Damping coefficient (0.5 is moderate damping)
+              const damping = 0.5;
+              const fDamp = vRel * damping;
+              
+              const fx = nx * fDamp;
+              const fy = ny * fDamp;
+
+              p1.force.x += fx;
+              p1.force.y += fy;
+              p2.force.x -= fx;
+              p2.force.y -= fy;
           }
-
-          const fx = dx * forceVal * 0.5;
-          const fy = dy * forceVal * 0.5;
-
-          p1.force.x += fx;
-          p1.force.y += fy;
-          p2.force.x -= fx;
-          p2.force.y -= fy;
       }
-      
       return activeCharge;
   }
 
-  private performMaterialPhysics(bot: Xenobot, time: number, dt: number, dtSq: number) {
+  private resolveConstraints(bot: Xenobot) {
+      const iterations = CONSTRAINT_ITERATIONS;
+      const springs = bot.springs;
+      const particles = bot.particles;
+
+      for (let i = 0; i < iterations; i++) {
+          for (const s of springs) {
+              const p1 = particles[s.p1];
+              const p2 = particles[s.p2];
+
+              const dx = p1.pos.x - p2.pos.x;
+              const dy = p1.pos.y - p2.pos.y;
+              const dist = Math.sqrt(dx*dx + dy*dy);
+              
+              if (dist < 0.0001) continue; 
+
+              const diff = (dist - s.currentRestLength) / dist;
+              
+              // Stiffness Rate
+              // Increased to 0.7 for better structural hold
+              const rate = s.stiffness * 0.7; 
+
+              const moveX = dx * diff * rate;
+              const moveY = dy * diff * rate;
+
+              const w1 = (1 / p1.mass) / ((1 / p1.mass) + (1 / p2.mass));
+              const w2 = (1 / p2.mass) / ((1 / p1.mass) + (1 / p2.mass));
+
+              p1.pos.x -= moveX * w1;
+              p1.pos.y -= moveY * w1;
+              p2.pos.x += moveX * w2;
+              p2.pos.y += moveY * w2;
+          }
+      }
+  }
+
+  private applyExternalForcesAndIntegrate(bot: Xenobot, time: number, dtSq: number) {
     const particles = bot.particles;
     const pCount = particles.length;
-    const ciliaForcesX = new Float32Array(pCount);
-    const ciliaForcesY = new Float32Array(pCount);
     
-    // Average velocity for group cohesion
+    // Calculate Group Heading (approximate)
     let avgVx = 0, avgVy = 0;
     for (let i = 0; i < pCount; i++) {
         avgVx += (particles[i].pos.x - particles[i].oldPos.x);
@@ -471,95 +418,59 @@ export class PhysicsEngine {
     }
     avgVx /= (pCount || 1);
     avgVy /= (pCount || 1);
-
-    const FLUID_DENSITY = 0.04; 
-    const PARTICLE_VOLUME = 30.0;
-    const BASE_DRAG = 0.15;
     
-    // Calculate connectivity ratio to determine structural drag
-    const connectivityRatio = bot.springs.length / (pCount || 1);
-    const isWellConnected = connectivityRatio > 3.0; // > 75% of max connections
-    
-    // Maturation check to avoid penalizing new spawns
-    const isMature = bot.age > 100; 
-
-    // Calculate structural drag modifier
-    let structuralDragMod = 1.0;
-    if (isWellConnected && isMature) {
-        // Denser organisms push more fluid, experiencing slightly higher drag
-        structuralDragMod = 1.25; 
-    } else {
-        // Fragmented or young bots are "leakier" to fluid
-        structuralDragMod = 0.95;
+    // Update Heading Smoothed
+    const speedSq = avgVx*avgVx + avgVy*avgVy;
+    if (speedSq > 0.1) {
+        const targetHeading = Math.atan2(avgVy, avgVx);
+        let diff = targetHeading - bot.heading;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        bot.heading += diff * 0.05;
     }
+
+    const FLUID_DRAG = 0.015;
+    
+    // Pre-calc Cilia Force
+    const { cx, cy } = this.calculateCiliaForce(bot, time);
 
     for (let i = 0; i < pCount; i++) {
         const p = particles[i];
-        
         bot.energy -= PARTICLE_MAINTENANCE_COST;
         
-        // 1. Gravity & Buoyancy
-        const fGravity = p.mass * this.config.gravity;
-        const fBuoyancy = -1.0 * FLUID_DENSITY * PARTICLE_VOLUME * this.config.gravity;
-
-        // 2. Fluid Drag
+        // 1. Fluid Drag
         const vx = (p.pos.x - p.oldPos.x); 
         const vy = (p.pos.y - p.oldPos.y);
         
-        // Bioelectric charge increases local viscosity (simulating mucus/secretion)
-        // Significantly boosted physical impact of high charge for visual effect
-        // Balanced to 5.0 to accommodate higher charge capacity without freezing bots
-        const viscosityMod = 1.0 + (p.charge * 5.0);
-        
-        // Apply structural modifier
-        const dragFactor = BASE_DRAG * viscosityMod * structuralDragMod;
-        
-        const fDragX = -vx * dragFactor;
-        const fDragY = -vy * dragFactor;
+        const dragFactor = FLUID_DRAG * (1.0 + p.charge * 0.5);
+        p.force.x -= vx * dragFactor;
+        p.force.y -= vy * dragFactor;
 
-        p.force.y += fGravity + fBuoyancy + fDragY;
-        p.force.x += fDragX;
+        // 2. Cilia Propulsion
+        p.force.x += cx * p.mass;
+        p.force.y += cy * p.mass;
 
-        // Brownian Motion
-        p.force.x += (Math.random() - 0.5) * 0.2;
-        p.force.y += (Math.random() - 0.5) * 0.2;
-
-        // 3. Cilia Force Calculation
-        const { cx, cy } = this.calculateCiliaForce(bot, p, time, avgVx, avgVy);
-        ciliaForcesX[i] = cx;
-        ciliaForcesY[i] = cy;
-
-        // 4. Dynamic Surface Tension
-        const energyRatio = Math.min(1.0, Math.max(0.1, bot.energy / INITIAL_YOLK_ENERGY));
-        const dynamicTension = (SURFACE_TENSION * 4.0) * (0.5 + 0.8 * energyRatio);
+        // 3. Surface Tension
         const dxSelf = bot.centerOfMass.x - p.pos.x;
         const dySelf = bot.centerOfMass.y - p.pos.y;
-        p.force.x += dxSelf * dynamicTension;
-        p.force.y += dySelf * dynamicTension;
+        p.force.x += dxSelf * SURFACE_TENSION;
+        p.force.y += dySelf * SURFACE_TENSION;
 
-        // Apply decay. Much slower decay (0.99999) for extremely persistent field trails.
-        p.charge *= 0.99999;
+        // Decay
+        // Very slow decay for persistent bio-electric trails
+        p.charge *= 0.999995; 
     }
 
-    // Apply Cilia Forces
-    for (let i = 0; i < pCount; i++) {
-        particles[i].force.x += ciliaForcesX[i];
-        particles[i].force.y += ciliaForcesY[i];
-    }
-    
     // Integrate (Verlet)
-    let cx = 0, cy = 0;
-    const velocityDamping = this.config.friction / 1.05; // Optimized constant
+    let centerX = 0, centerY = 0;
+    const globalFriction = this.config.friction; // 0.99
 
     for (const p of particles) {
         p.force.x = Math.max(-MAX_FORCE, Math.min(MAX_FORCE, p.force.x));
         p.force.y = Math.max(-MAX_FORCE, Math.min(MAX_FORCE, p.force.y));
 
-        let vx = (p.pos.x - p.oldPos.x) * velocityDamping;
-        let vy = (p.pos.y - p.oldPos.y) * velocityDamping;
-
-        vx = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, vx));
-        vy = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, vy));
+        const vx = (p.pos.x - p.oldPos.x) * globalFriction;
+        const vy = (p.pos.y - p.oldPos.y) * globalFriction;
 
         p.oldPos.x = p.pos.x;
         p.oldPos.y = p.pos.y;
@@ -570,67 +481,37 @@ export class PhysicsEngine {
         p.force.x = 0;
         p.force.y = 0;
 
-        cx += p.pos.x;
-        cy += p.pos.y;
+        centerX += p.pos.x;
+        centerY += p.pos.y;
     }
     
     if (pCount > 0) {
-        bot.centerOfMass.x = cx / pCount;
-        bot.centerOfMass.y = cy / pCount;
+        bot.centerOfMass.x = centerX / pCount;
+        bot.centerOfMass.y = centerY / pCount;
     }
   }
 
-  private calculateCiliaForce(bot: Xenobot, p: Particle, time: number, avgVx: number, avgVy: number) {
-      const memory = bot.genome.bioelectricMemory || 0.5;
-      
+  private calculateCiliaForce(bot: Xenobot, time: number) {
       const hx = Math.cos(bot.heading);
       const hy = Math.sin(bot.heading);
 
-      const relX = (p.pos.x - bot.centerOfMass.x);
-      const relY = (p.pos.y - bot.centerOfMass.y);
-      
-      const longitudinalProjection = (relX * hx + relY * hy);
-      
-      const waveLength = 120.0 + (memory * 250.0); 
-      const waveSpeed = 3.0 + (memory * 2.0);
+      const memory = bot.genome.bioelectricMemory || 0.5;
+      const waveSpeed = 2.0 + (memory * 2.0);
+      const beat = Math.sin(time * waveSpeed);
 
-      const spatialPhase = longitudinalProjection / waveLength;
-      
-      const breathing = 1.0 + 0.2 * Math.sin(time * 0.5); 
-      const temporalPhase = time * waveSpeed * breathing;
-
-      const cycle = (spatialPhase * Math.PI * 2.0) - temporalPhase;
-      
-      const rawBeat = Math.sin(cycle);
-      
-      let thrustMag = 0;
-      let lateralMag = 0;
-
-      if (rawBeat > 0.2) {
-          const power = Math.pow(rawBeat, 2.0); 
-          thrustMag = CILIA_FORCE * 3.0 * power;
-          lateralMag = CILIA_FORCE * 0.5 * Math.cos(cycle); 
+      let thrust = 0;
+      if (beat > 0.2) {
+          thrust = CILIA_FORCE * beat; 
       } else {
-          thrustMag = CILIA_FORCE * 0.1 * rawBeat; 
-          lateralMag = 0;
+          thrust = CILIA_FORCE * 0.1 * beat; 
       }
 
-      let cx = (thrustMag * hx) + (lateralMag * -hy);
-      let cy = (thrustMag * hy) + (lateralMag * hx);
-      
-      const pVx = p.pos.x - p.oldPos.x;
-      const pVy = p.pos.y - p.oldPos.y;
-      const cohesionStrength = 8.0 * memory; 
-      
-      cx += (avgVx - pVx) * cohesionStrength;
-      cy += (avgVy - pVy) * cohesionStrength;
+      const wander = Math.sin(time * 0.5 + parseInt(bot.id.substr(0,3), 36));
+      const turn = wander * 0.5;
 
-      if (memory < 0.3) {
-          const noiseScale = (0.3 - memory) * 0.5;
-          cx += (Math.random() - 0.5) * noiseScale * CILIA_FORCE;
-          cy += (Math.random() - 0.5) * noiseScale * CILIA_FORCE;
-      }
-
+      const cx = thrust * (hx - turn * hy);
+      const cy = thrust * (hy + turn * hx);
+      
       return { cx, cy };
   }
 
@@ -669,32 +550,13 @@ export class PhysicsEngine {
                         p2.pos.x -= moveX;
                         p2.pos.y -= moveY;
 
-                        const v1x = p1.pos.x - p1.oldPos.x;
-                        const v1y = p1.pos.y - p1.oldPos.y;
-                        const v2x = p2.pos.x - p2.oldPos.x;
-                        const v2y = p2.pos.y - p2.oldPos.y;
-                        
-                        const rvx = v1x - v2x;
-                        const rvy = v1y - v2y;
-                        const impactVelocity = Math.abs(rvx * nx + rvy * ny);
-
-                        const reducedMass = (p1.mass * p2.mass) / (p1.mass + p2.mass);
-
-                        const baseTransferRate = 0.005;
-                        const kineticFactor = impactVelocity * reducedMass * 0.04; 
-
-                        const totalRate = Math.min(0.15, baseTransferRate + kineticFactor);
-
-                        const eDiff = b1.energy - b2.energy;
-                        const transfer = eDiff * totalRate;
-                        
+                        // Energy Transfer
+                        const transfer = (b1.energy - b2.energy) * 0.01;
                         b1.energy -= transfer;
                         b2.energy += transfer;
 
                         b1.lastCollisionTime = Date.now();
                         b1.lastCollisionPoint = { x: (p1.pos.x + p2.pos.x) * 0.5, y: (p1.pos.y + p2.pos.y) * 0.5 };
-                        
-                        if (transfer > 0.5) this.events.push('COLLISION');
                     }
                 }
             }
@@ -706,11 +568,13 @@ export class PhysicsEngine {
     const currentGenomes = this.bots.map(b => {
         const dist = b.centerOfMass.x - b.startPosition.x;
         b.genome.fitness = b.energy + dist * 2;
+        // IMPORTANT: Persist current position so the next generation starts nearby
+        b.genome.originX = b.centerOfMass.x;
+        b.genome.originY = b.centerOfMass.y;
         return b.genome;
     });
     
     const newGenomes = algoEvolve(currentGenomes, generation, this.config.populationSize);
-    
     if (newGenomes.length === 0) return false;
 
     const nextBots: Xenobot[] = [];
@@ -719,11 +583,23 @@ export class PhysicsEngine {
         if (existing && !existing.isDead) {
             nextBots.push(existing);
         } else {
+            // FIXED: Respect the genome's inherited position logic from geneticAlgorithm
             let startX = 0;
-            if (typeof g.originX === 'number') startX = g.originX + (Math.random()-0.5)*50;
-            else startX = (Math.random()-0.5)*1000;
+            let startY = 0;
 
-            const bot = this.createBot(g, startX, 200 + Math.random() * 100);
+            if (typeof g.originX === 'number' && !isNaN(g.originX)) {
+                startX = g.originX + (Math.random()-0.5)*50;
+            } else {
+                startX = (Math.random()-0.5)*1000;
+            }
+
+            if (typeof g.originY === 'number' && !isNaN(g.originY)) {
+                startY = g.originY + (Math.random()-0.5)*50;
+            } else {
+                startY = 200 + Math.random() * 100;
+            }
+
+            const bot = this.createBot(g, startX, startY);
             nextBots.push(bot);
         }
     });
@@ -753,40 +629,27 @@ export class PhysicsEngine {
   }
 
   public smoothRenderPositions() {
-      // Damped Spring Smoothing System
-      // Provides organic, fluid motion visualization without rigid jitter
-      // Updated constants: Lower tension for lazier follow, higher damping to kill vibration
-      const tension = 0.15;   // Spring stiffness (catch-up speed)
-      const damping = 0.90;   // Friction (prevents oscillation)
+      const tension = 0.25; 
+      const damping = 0.85;   
 
       this.bots.forEach(b => {
           b.particles.forEach(p => {
-              // Ensure renderVel exists (backwards compatibility or safety)
               if (!p.renderVel) p.renderVel = { x: 0, y: 0 };
 
               const dx = p.pos.x - p.renderPos.x;
               const dy = p.pos.y - p.renderPos.y;
               const distSq = dx*dx + dy*dy;
 
-              // Teleport threshold to prevent streaking artifacts on respawn/wrap
               if (distSq > 4000) {
                   p.renderPos.x = p.pos.x;
                   p.renderPos.y = p.pos.y;
                   p.renderVel.x = 0;
                   p.renderVel.y = 0;
               } else {
-                  // Hooke's Law with Damping: F = -kx - cv
-                  // Here implemented iteratively
-                  
-                  // Acceleration towards target
                   const ax = dx * tension;
                   const ay = dy * tension;
-
-                  // Update Velocity with Damping
                   p.renderVel.x = (p.renderVel.x + ax) * damping;
                   p.renderVel.y = (p.renderVel.y + ay) * damping;
-
-                  // Update Position
                   p.renderPos.x += p.renderVel.x;
                   p.renderPos.y += p.renderVel.y;
               }

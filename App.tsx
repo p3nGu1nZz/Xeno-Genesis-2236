@@ -32,6 +32,7 @@ const App: React.FC = () => {
   const [generation, setGeneration] = useState(1);
   const [isRunning, setIsRunning] = useState(false);
   const [evolutionProgress, setEvolutionProgress] = useState(0);
+  const [showEvolutionFlash, setShowEvolutionFlash] = useState(false);
   
   // Genome Visibility State
   const [showGenomePanel, setShowGenomePanel] = useState(false);
@@ -186,6 +187,14 @@ const App: React.FC = () => {
   
       // Always increment the cycle counter to reflect the passage of evolutionary epochs
       setGeneration(g => g + 1);
+
+      // Trigger Evolution FX
+      setShowEvolutionFlash(true);
+      setTimeout(() => setShowEvolutionFlash(false), 1500);
+      audioManagerRef.current?.playEvolutionSound();
+
+      // Update Music Generative State
+      audioManagerRef.current?.updateGenerativeParams(stats);
 
       // Only update population ref if actual changes to gene pool happened (optimization)
       if (evolutionOccurred) {
@@ -353,16 +362,33 @@ const App: React.FC = () => {
           }
 
           if (targetBot) {
+             // Calculate Visual Center of Mass from smoothed render positions
+             // This ensures the camera tracks the visual representation, not the jittery physics body
+             let visualX = 0, visualY = 0;
+             const pCount = targetBot.particles.length;
+             
+             if (pCount > 0) {
+                 for(let i=0; i<pCount; i++) {
+                     visualX += targetBot.particles[i].renderPos.x;
+                     visualY += targetBot.particles[i].renderPos.y;
+                 }
+                 visualX /= pCount;
+                 visualY /= pCount;
+             } else {
+                 visualX = targetBot.centerOfMass.x;
+                 visualY = targetBot.centerOfMass.y;
+             }
+
              // Offset logic: Keep bot in the left ~35% of the screen
              const offsetX = (dimensions.width * 0.15) / camera.zoom;
 
-             const targetCamX = targetBot.centerOfMass.x + offsetX;
-             const targetCamY = targetBot.centerOfMass.y;
+             const targetCamX = visualX + offsetX;
+             const targetCamY = visualY;
              
-             // Damped Spring Physics (Replacing Lerp for organic feel)
-             // Refined constants to match organic particle smoothing
-             const springK = 0.08; // Increased Stiffness (Tension) from 0.05
-             const springD = 0.80; // Decreased Damping (Friction) from 0.85
+             // Damped Spring Physics for Camera Smoothing
+             // Values tuned to complement bot smoothing (Tension: 0.25, Damping: 0.85)
+             const springK = 0.10; // Softer than bot structure for smooth following
+             const springD = 0.88; // High damping for stability
 
              // 1. Calculate Acceleration (Hooke's Law: F = -kx)
              const ax = (targetCamX - camera.x) * springK;
@@ -466,6 +492,14 @@ const App: React.FC = () => {
       
       {appState === 'SIMULATION' && (
         <div className="relative w-full h-full overflow-hidden bg-deep-space">
+          {/* Evolution Flash Effect */}
+          <div 
+             className={`absolute inset-0 z-[100] bg-white pointer-events-none transition-opacity duration-1000 ease-out mix-blend-overlay ${showEvolutionFlash ? 'opacity-30' : 'opacity-0'}`}
+          />
+          <div 
+             className={`absolute inset-0 z-[100] bg-neon-cyan/20 pointer-events-none transition-opacity duration-1000 ease-out mix-blend-screen ${showEvolutionFlash ? 'opacity-40' : 'opacity-0'}`}
+          />
+
           <SimulationCanvas 
             botsRef={botsRef}
             foodRef={foodRef}

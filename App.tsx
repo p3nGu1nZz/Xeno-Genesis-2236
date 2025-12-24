@@ -193,9 +193,6 @@ const App: React.FC = () => {
       setTimeout(() => setShowEvolutionFlash(false), 1500);
       audioManagerRef.current?.playEvolutionSound();
 
-      // Update Music Generative State
-      audioManagerRef.current?.updateGenerativeParams(stats);
-
       // Only update population ref if actual changes to gene pool happened (optimization)
       if (evolutionOccurred) {
           populationRef.current = engine.bots.map(b => b.genome);
@@ -285,6 +282,13 @@ const App: React.FC = () => {
                   if (e === 'MITOSIS') audioManagerRef.current?.playMitosisSound();
                   if (e === 'DEATH') audioManagerRef.current?.playDeathSound();
               });
+          }
+
+          // Dynamic Ambient Audio Update
+          // Pass the raw event list and bot state to the audio manager every frame
+          // The audio manager handles the smoothing and logic
+          if (audioManagerRef.current) {
+              audioManagerRef.current.updateAmbience(engine.events, engine.bots);
           }
 
           // Sync Refs
@@ -385,25 +389,52 @@ const App: React.FC = () => {
              const targetCamX = visualX + offsetX;
              const targetCamY = visualY;
              
-             // Damped Spring Physics for Camera Smoothing
-             // Values tuned to complement bot smoothing (Tension: 0.25, Damping: 0.85)
-             const springK = 0.10; // Softer than bot structure for smooth following
-             const springD = 0.88; // High damping for stability
-
-             // 1. Calculate Acceleration (Hooke's Law: F = -kx)
-             const ax = (targetCamX - camera.x) * springK;
-             const ay = (targetCamY - camera.y) * springK;
-
-             // 2. Update Velocity (Euler Integration)
-             cameraVelRef.current.x = (cameraVelRef.current.x + ax) * springD;
-             cameraVelRef.current.y = (cameraVelRef.current.y + ay) * springD;
+             // Hybrid Smoothing: Matches the bot particle smoothing in physicsEngine.ts
+             // 1. Damped Spring for organic, fluid-like motion.
+             // 2. Low-Pass Filter (LERP) for micro-movement stabilization.
              
-             // 3. Update Position
-             setCamera(prev => ({
-                 ...prev,
-                 x: prev.x + cameraVelRef.current.x,
-                 y: prev.y + cameraVelRef.current.y,
-             }));
+             // ADJUSTED FOR CINEMATIC FEEL
+             const springK = 0.04; // Reduced from 0.08 for more cinematic lag
+             const springD = 0.94; // Increased from 0.92 for smoother damping
+
+             const dx = targetCamX - camera.x;
+             const dy = targetCamY - camera.y;
+             const distSq = dx*dx + dy*dy;
+
+             // Teleport if distance is too massive (e.g. init or respawn)
+             if (distSq > 1000000) {
+                 setCamera(prev => ({...prev, x: targetCamX, y: targetCamY}));
+                 cameraVelRef.current = { x: 0, y: 0 };
+             } 
+             // Micro-movement stabilizer (Low Pass Filter) for when camera is very close to target
+             else if (distSq < 1.0) {
+                 const lerpFactor = 0.1;
+                 setCamera(prev => ({
+                     ...prev,
+                     x: prev.x + dx * lerpFactor,
+                     y: prev.y + dy * lerpFactor
+                 }));
+                 // Kill velocity to prevent oscillation around 0
+                 cameraVelRef.current.x *= 0.5;
+                 cameraVelRef.current.y *= 0.5;
+             } 
+             // Standard Damped Spring Physics
+             else {
+                 // 1. Calculate Acceleration (Hooke's Law: F = -kx)
+                 const ax = dx * springK;
+                 const ay = dy * springK;
+
+                 // 2. Update Velocity (Semi-implicit Euler)
+                 cameraVelRef.current.x = (cameraVelRef.current.x + ax) * springD;
+                 cameraVelRef.current.y = (cameraVelRef.current.y + ay) * springD;
+                 
+                 // 3. Update Position
+                 setCamera(prev => ({
+                     ...prev,
+                     x: prev.x + cameraVelRef.current.x,
+                     y: prev.y + cameraVelRef.current.y,
+                 }));
+             }
           }
       }
 

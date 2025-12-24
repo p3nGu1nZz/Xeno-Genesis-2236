@@ -41,7 +41,7 @@ export class PhysicsEngine {
   constructor(config: SimulationConfig) {
     this.config = config;
     this.groundY = config.groundHeight;
-    this.spawnFood();
+    this.spawnFood()
   }
 
   public spawnFood() {
@@ -629,27 +629,46 @@ export class PhysicsEngine {
   }
 
   public smoothRenderPositions() {
-      const tension = 0.25; 
-      const damping = 0.85;   
+      // Hybrid Smoothing: 
+      // 1. Damped Spring for organic, fluid-like motion.
+      // 2. Low-Pass Filter (LERP) for micro-movement stabilization.
+      
+      const stiffness = 0.15; // Low tension for smooth, slightly lazy follow
+      const friction = 0.92;  // High friction to dampen oscillation
 
       this.bots.forEach(b => {
           b.particles.forEach(p => {
               if (!p.renderVel) p.renderVel = { x: 0, y: 0 };
 
-              const dx = p.pos.x - p.renderPos.x;
-              const dy = p.pos.y - p.renderPos.y;
+              const targetX = p.pos.x;
+              const targetY = p.pos.y;
+              
+              const dx = targetX - p.renderPos.x;
+              const dy = targetY - p.renderPos.y;
               const distSq = dx*dx + dy*dy;
 
-              if (distSq > 4000) {
-                  p.renderPos.x = p.pos.x;
-                  p.renderPos.y = p.pos.y;
+              // Teleport if lag is too large (e.g. init or respawn)
+              if (distSq > 5000) {
+                  p.renderPos.x = targetX;
+                  p.renderPos.y = targetY;
                   p.renderVel.x = 0;
                   p.renderVel.y = 0;
+              } else if (distSq < 0.05) {
+                  // Micro-movement stabilizer (Low Pass Filter)
+                  // Prevents sub-pixel jitter when static or moving very slowly
+                  p.renderPos.x += dx * 0.2;
+                  p.renderPos.y += dy * 0.2;
+                  p.renderVel.x *= 0.5; // Kill velocity
+                  p.renderVel.y *= 0.5;
               } else {
-                  const ax = dx * tension;
-                  const ay = dy * tension;
-                  p.renderVel.x = (p.renderVel.x + ax) * damping;
-                  p.renderVel.y = (p.renderVel.y + ay) * damping;
+                  // Damped Spring Physics for large movements
+                  const ax = dx * stiffness;
+                  const ay = dy * stiffness;
+                  
+                  // Semi-implicit Euler integration
+                  p.renderVel.x = (p.renderVel.x + ax) * friction;
+                  p.renderVel.y = (p.renderVel.y + ay) * friction;
+                  
                   p.renderPos.x += p.renderVel.x;
                   p.renderPos.y += p.renderVel.y;
               }

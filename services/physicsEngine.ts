@@ -643,28 +643,43 @@ export class PhysicsEngine {
   }
 
   public smoothRenderPositions() {
-      // Significantly Reduced LERP Factor for Buttery Smoothness
-      // 0.12 decouples render pos from physics stutter
-      const alpha = 0.12; 
+      // Damped Spring Smoothing (Low-Pass Filter)
+      // Replaces simple LERP with a mass-spring-damper for organic, jitter-free motion
+      const dt = 1.0 / 60.0; // Fixed visual timestep assumption
+      const tension = 180.0; // Stiffness: Controls tracking speed
+      const damping = 26.0;  // Damping: Controls oscillation (Critical ~= 2*sqrt(tension))
+                             // 2*sqrt(180) ~= 26.8. Using 26.0 is slightly underdamped.
 
       this.bots.forEach(b => {
           b.particles.forEach(p => {
+              if (!p.renderVel) p.renderVel = { x: 0, y: 0 };
+
               const targetX = p.pos.x;
               const targetY = p.pos.y;
               
-              // Initial placement fix: warp if too far
               const dx = targetX - p.renderPos.x;
               const dy = targetY - p.renderPos.y;
               const distSq = dx*dx + dy*dy;
               
-              if (distSq > 2500) { 
+              // Teleport / Reset if divergence is too high (e.g. initialization or layout change)
+              if (distSq > 3600) { // 60px radius
                   p.renderPos.x = targetX;
                   p.renderPos.y = targetY;
+                  p.renderVel.x = 0;
+                  p.renderVel.y = 0;
                   return;
               }
 
-              p.renderPos.x += dx * alpha;
-              p.renderPos.y += dy * alpha;
+              // Spring Force: F = k*x - c*v
+              const ax = tension * dx - damping * p.renderVel.x;
+              const ay = tension * dy - damping * p.renderVel.y;
+
+              // Semi-Implicit Euler Integration
+              p.renderVel.x += ax * dt;
+              p.renderVel.y += ay * dt;
+
+              p.renderPos.x += p.renderVel.x * dt;
+              p.renderPos.y += p.renderVel.y * dt;
           });
       });
   }

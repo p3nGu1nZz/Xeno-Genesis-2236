@@ -28,8 +28,8 @@ import {
 import { evolvePopulation as algoEvolve, mutate, pruneGenome } from './geneticAlgorithm';
 
 const uid = () => Math.random().toString(36).substr(2, 9);
-const MAX_FORCE = 50.0; 
-const MAX_VELOCITY = 20.0; // Stricter cap for stability
+const MAX_FORCE = 40.0; 
+const MAX_VELOCITY = 12.0; 
 const PARTICLE_MAINTENANCE_COST = 0.005; 
 
 export class PhysicsEngine {
@@ -77,7 +77,7 @@ export class PhysicsEngine {
            const py = startY + (y - size/2) * scale;
            
            let mass = 1.0; 
-           if (cellType === CellType.HEART) mass = 1.1; 
+           if (cellType === CellType.HEART) mass = 1.2; 
            if (cellType === CellType.NEURON) mass = 1.0; 
 
            particles.push({
@@ -121,14 +121,14 @@ export class PhysicsEngine {
                     const isMuscle = (type1 === CellType.HEART || type2 === CellType.HEART);
                     const isNeuron = (type1 === CellType.NEURON || type2 === CellType.NEURON);
                     
-                    let stiffness = 0.3; // Base stiffness
+                    let stiffness = 1.0; 
                     
                     if (type1 === CellType.NEURON && type2 === CellType.NEURON) {
-                        stiffness = 0.6; // Stiffer Spine
+                        stiffness = 1.25; 
                     } else if (isNeuron) {
-                        stiffness = 0.45;
+                        stiffness = 1.15;
                     } else if (isMuscle) {
-                        stiffness = 0.3; 
+                        stiffness = 0.9; 
                     }
 
                     springs.push({
@@ -178,13 +178,12 @@ export class PhysicsEngine {
     const botCount = this.bots.length;
 
     // --- PHYSICS SUB-STEPPING ---
-    // Running physics multiple times per frame drastically improves stability
     const subSteps = SUB_STEPS;
     const dt = TIMESTEP; 
     const dtSq = dt * dt;
 
     for (let s = 0; s < subSteps; s++) {
-        // 1. Resolve Collisions (Every sub-step prevents tunneling)
+        // 1. Resolve Collisions (Optimized)
         if (botCount > 1) {
             this.resolveCollisions(botCount);
         }
@@ -194,23 +193,15 @@ export class PhysicsEngine {
             const bot = this.bots[i];
             if (bot.isDead) continue;
 
-            // Update Structure (Muscles/Springs)
-            // We pass totalTime because muscle phase is based on global time
             const activeCharge = this.updateInternalStructure(bot, totalTime);
-            
-            // Apply Forces & Integrate
             this.applyExternalForcesAndIntegrate(bot, totalTime, dtSq);
-            
-            // Resolve Constraints (Shape retention)
             this.resolveConstraints(bot);
 
-            // Accumulate charge for visuals (averaged later)
             if (s === 0) bot.totalCharge = activeCharge;
         }
     }
 
     // --- ONCE PER FRAME LOGIC ---
-    
     const newBots: Xenobot[] = [];
     const maxBots = this.config.maxPopulationSize;
 
@@ -312,28 +303,33 @@ export class PhysicsEngine {
       const mSpeed = this.config.muscleSpeed;
       const chargeLimit = 200.0; 
       
-      const decayFactor = METABOLIC_DECAY * 0.05; // Reduced decay as this runs sub-stepped
+      const decayFactor = METABOLIC_DECAY * 0.05; 
+      const dampingCoefficient = 1.1; // Increased slightly to reduce pulsing
 
       for (const s of springs) {
           const p1 = particles[s.p1];
           const p2 = particles[s.p2];
 
+          // 1. Muscle Actuation
           if (s.isMuscle) {
               bot.energy -= decayFactor;
               const avgCharge = (p1.charge + p2.charge) * 0.5;
               const freqMod = 1.0 + avgCharge * 4.0; 
               
               const contraction = Math.sin(time * mSpeed * freqMod + (s.phaseOffset || 0));
-              s.currentRestLength = s.restLength * (1.0 + contraction * mStrength * 0.4);
+              // Reduced amplitude (0.35) to prevent visual jittering/pulsing artifacts
+              s.currentRestLength = s.restLength * (1.0 + contraction * mStrength * 0.35);
           } else {
               s.currentRestLength = s.restLength;
           }
 
+          // 2. Geometry & Forces
           const dx = p1.pos.x - p2.pos.x;
           const dy = p1.pos.y - p2.pos.y;
           const distSq = dx*dx + dy*dy;
           const currLen = Math.sqrt(distSq);
           
+          // Charge Gen
           const strain = Math.abs(currLen - s.currentRestLength) / s.currentRestLength;
           if (strain > 0.05) {
              const chargeGen = strain * 10.0;
@@ -342,7 +338,6 @@ export class PhysicsEngine {
           }
           activeCharge += (p1.charge + p2.charge);
 
-          // Internal Damping
           if (distSq > 0.0001) {
               const v1x = p1.pos.x - p1.oldPos.x;
               const v1y = p1.pos.y - p1.oldPos.y;
@@ -353,12 +348,14 @@ export class PhysicsEngine {
               const ny = dy / currLen;
 
               const vRel = (v2x - v1x) * nx + (v2y - v1y) * ny;
+              const displacement = currLen - s.currentRestLength;
               
-              const damping = 0.5; // Moderate damping suffices with sub-stepping
-              const fDamp = vRel * damping;
-              
-              const fx = nx * fDamp;
-              const fy = ny * fDamp;
+              const fSpring = displacement * s.stiffness;
+              const fDamp = vRel * dampingCoefficient;
+              const fTotal = -(fSpring + fDamp);
+
+              const fx = nx * fTotal;
+              const fy = ny * fTotal;
 
               p1.force.x += fx;
               p1.force.y += fy;
@@ -373,6 +370,7 @@ export class PhysicsEngine {
       const iterations = CONSTRAINT_ITERATIONS;
       const springs = bot.springs;
       const particles = bot.particles;
+      const rate = 0.15; 
 
       for (let i = 0; i < iterations; i++) {
           for (const s of springs) {
@@ -386,8 +384,6 @@ export class PhysicsEngine {
               if (dist < 0.0001) continue; 
 
               const diff = (dist - s.currentRestLength) / dist;
-              const rate = s.stiffness * 0.6; 
-
               const moveX = dx * diff * rate;
               const moveY = dy * diff * rate;
 
@@ -427,14 +423,12 @@ export class PhysicsEngine {
         bot.heading += diff * 0.05;
     }
 
-    const FLUID_DRAG = 0.01; 
+    const FLUID_DRAG = 0.05; 
     const { cx, cy } = this.calculateCiliaForce(bot, time);
-
+    const globalFriction = this.config.friction; 
     let centerX = 0, centerY = 0;
-    const globalFriction = this.config.friction; // High friction per step (0.99)
 
     for (const p of particles) {
-        
         let vx = (p.pos.x - p.oldPos.x); 
         let vy = (p.pos.y - p.oldPos.y);
         
@@ -458,7 +452,6 @@ export class PhysicsEngine {
         let newVx = vx * globalFriction + p.force.x * dtSq;
         let newVy = vy * globalFriction + p.force.y * dtSq;
 
-        // Velocity Clamping to prevent explosion
         const velMag = Math.sqrt(newVx*newVx + newVy*newVy);
         if (velMag > MAX_VELOCITY) {
             const scale = MAX_VELOCITY / velMag;
@@ -507,48 +500,83 @@ export class PhysicsEngine {
       return { cx, cy };
   }
 
+  // Optimized Spatial Hash Collision Detection
   private resolveCollisions(botCount: number) {
+      const GRID_CELL_SIZE = 400; // Broadphase cell size
+      const grid = new Map<string, Xenobot[]>();
+
+      // 1. Build Grid
       for (let i = 0; i < botCount; i++) {
-        const b1 = this.bots[i];
-        if (b1.isDead) continue;
+          const bot = this.bots[i];
+          if (bot.isDead) continue;
+          
+          const gx = Math.floor(bot.centerOfMass.x / GRID_CELL_SIZE);
+          const gy = Math.floor(bot.centerOfMass.y / GRID_CELL_SIZE);
+          const key = `${gx},${gy}`;
+          
+          if (!grid.has(key)) grid.set(key, []);
+          grid.get(key)!.push(bot);
+      }
 
-        for (let j = i + 1; j < botCount; j++) {
-            const b2 = this.bots[j];
-            if (b2.isDead) continue;
+      // 2. Query Neighbors (3x3 grid)
+      const neighborOffsets = [
+          [0,0], [1,0], [-1,0], [0,1], [0,-1],
+          [1,1], [1,-1], [-1,1], [-1,-1]
+      ];
 
-            const dx = b1.centerOfMass.x - b2.centerOfMass.x;
-            const dy = b1.centerOfMass.y - b2.centerOfMass.y;
-            const distSq = dx*dx + dy*dy;
-            if (distSq > 160000) continue; 
+      for (let i = 0; i < botCount; i++) {
+          const b1 = this.bots[i];
+          if (b1.isDead) continue;
+          
+          const gx = Math.floor(b1.centerOfMass.x / GRID_CELL_SIZE);
+          const gy = Math.floor(b1.centerOfMass.y / GRID_CELL_SIZE);
 
-            for (const p1 of b1.particles) {
-                for (const p2 of b2.particles) {
-                    const pdx = p1.pos.x - p2.pos.x;
-                    const pdy = p1.pos.y - p2.pos.y;
-                    const pDistSq = pdx*pdx + pdy*pdy;
-                    const minDist = COLLISION_RADIUS * 2;
-                    
-                    if (pDistSq < minDist * minDist && pDistSq > 0.0001) {
-                        const pDist = Math.sqrt(pDistSq);
-                        const overlap = minDist - pDist;
-                        const nx = pdx / pDist;
-                        const ny = pdy / pDist;
-                        
-                        // Gentle separation
-                        const moveX = nx * overlap * 0.15; 
-                        const moveY = ny * overlap * 0.15;
+          for (const offset of neighborOffsets) {
+              const nKey = `${gx + offset[0]},${gy + offset[1]}`;
+              const neighbors = grid.get(nKey);
+              
+              if (!neighbors) continue;
 
-                        p1.pos.x += moveX;
-                        p1.pos.y += moveY;
-                        p2.pos.x -= moveX;
-                        p2.pos.y -= moveY;
+              for (const b2 of neighbors) {
+                  // Avoid duplicate checks (id comparison ensures only checking pair once)
+                  if (b1.id >= b2.id) continue;
+                  
+                  // Optimized Broadphase
+                  const dx = b1.centerOfMass.x - b2.centerOfMass.x;
+                  const dy = b1.centerOfMass.y - b2.centerOfMass.y;
+                  const distSq = dx*dx + dy*dy;
+                  
+                  if (distSq > 160000) continue; // Broadphase rejection
 
-                        b1.lastCollisionTime = Date.now();
-                        b1.lastCollisionPoint = { x: (p1.pos.x + p2.pos.x) * 0.5, y: (p1.pos.y + p2.pos.y) * 0.5 };
-                    }
-                }
-            }
-        }
+                  // Particle-Particle Narrowphase
+                  for (const p1 of b1.particles) {
+                      for (const p2 of b2.particles) {
+                          const pdx = p1.pos.x - p2.pos.x;
+                          const pdy = p1.pos.y - p2.pos.y;
+                          const pDistSq = pdx*pdx + pdy*pdy;
+                          const minDist = COLLISION_RADIUS * 2;
+                          
+                          if (pDistSq < minDist * minDist && pDistSq > 0.0001) {
+                              const pDist = Math.sqrt(pDistSq);
+                              const overlap = minDist - pDist;
+                              const nx = pdx / pDist;
+                              const ny = pdy / pDist;
+                              
+                              const moveX = nx * overlap * 0.15; 
+                              const moveY = ny * overlap * 0.15;
+
+                              p1.pos.x += moveX;
+                              p1.pos.y += moveY;
+                              p2.pos.x -= moveX;
+                              p2.pos.y -= moveY;
+
+                              b1.lastCollisionTime = Date.now();
+                              b1.lastCollisionPoint = { x: (p1.pos.x + p2.pos.x) * 0.5, y: (p1.pos.y + p2.pos.y) * 0.5 };
+                          }
+                      }
+                  }
+              }
+          }
       }
   }
 
@@ -615,16 +643,16 @@ export class PhysicsEngine {
   }
 
   public smoothRenderPositions() {
-      // 0.35 LERP Factor
-      // A standard low-pass filter (Linear Interpolation) provides the best balance 
-      // between smoothness and responsiveness for sub-stepped physics.
-      const alpha = 0.35; 
+      // Significantly Reduced LERP Factor for Buttery Smoothness
+      // 0.12 decouples render pos from physics stutter
+      const alpha = 0.12; 
 
       this.bots.forEach(b => {
           b.particles.forEach(p => {
               const targetX = p.pos.x;
               const targetY = p.pos.y;
               
+              // Initial placement fix: warp if too far
               const dx = targetX - p.renderPos.x;
               const dy = targetY - p.renderPos.y;
               const distSq = dx*dx + dy*dy;

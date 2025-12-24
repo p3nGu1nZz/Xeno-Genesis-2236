@@ -11,9 +11,9 @@ export const DEFAULT_CONFIG: SimulationConfig = {
   maxPopulationSize: MAX_POPULATION_CAP,
   foodCount: DEFAULT_FOOD_COUNT,
   gravity: 0.0, 
-  friction: 0.99, // High friction (0.99) per sub-step to prevent velocity explosion
-  muscleStrength: 0.8, 
-  muscleSpeed: 0.12, 
+  friction: 0.98, // Increased friction for stability with lower sub-steps
+  muscleStrength: 0.7, // Slightly reduced to prevent violent pulsing
+  muscleSpeed: 0.05, // Slower, more organic beat
   groundHeight: 0, 
   gridScale: 60, 
   bioelectricDecay: 0.999, 
@@ -33,12 +33,12 @@ export const COLORS = {
 };
 
 // Sub-stepping configuration
-export const SUB_STEPS = 4; // Number of physics steps per render frame
-export const TIMESTEP = 0.25; // Smaller timestep for stability (was 0.6)
-export const CONSTRAINT_ITERATIONS = 4; // Lower iterations per sub-step is fine (total 16/frame)
+export const SUB_STEPS = 4; // Optimized: Reduced from 6 to 4 for performance
+export const TIMESTEP = 0.2; // Slightly higher dt to compensate for fewer steps
+export const CONSTRAINT_ITERATIONS = 3; 
 
 // Biological Constants based on papers
-export const CILIA_FORCE = 2.5; // Slightly reduced for sub-stepping accumulation
+export const CILIA_FORCE = 2.0; 
 export const METABOLIC_DECAY = 0.01; 
 export const INITIAL_YOLK_ENERGY = 3000; 
 export const MITOSIS_THRESHOLD = 8000; 

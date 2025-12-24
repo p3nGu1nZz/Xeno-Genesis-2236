@@ -393,9 +393,9 @@ const App: React.FC = () => {
              // 1. Damped Spring for organic, fluid-like motion.
              // 2. Low-Pass Filter (LERP) for micro-movement stabilization.
              
-             // ADJUSTED FOR CINEMATIC FEEL
-             const springK = 0.04; // Reduced from 0.08 for more cinematic lag
-             const springD = 0.94; // Increased from 0.92 for smoother damping
+             // Tuned for "Heavy" Cinematic Feel
+             const springK = 0.02; // Very lazy spring
+             const springD = 0.95; // High damping
 
              const dx = targetCamX - camera.x;
              const dy = targetCamY - camera.y;
@@ -407,16 +407,17 @@ const App: React.FC = () => {
                  cameraVelRef.current = { x: 0, y: 0 };
              } 
              // Micro-movement stabilizer (Low Pass Filter) for when camera is very close to target
-             else if (distSq < 1.0) {
-                 const lerpFactor = 0.1;
+             // Tighter threshold (0.5) ensures settling happens only when practically stopped
+             else if (distSq < 0.5) {
+                 const lerpFactor = 0.05; // Slower settle
                  setCamera(prev => ({
                      ...prev,
                      x: prev.x + dx * lerpFactor,
                      y: prev.y + dy * lerpFactor
                  }));
                  // Kill velocity to prevent oscillation around 0
-                 cameraVelRef.current.x *= 0.5;
-                 cameraVelRef.current.y *= 0.5;
+                 cameraVelRef.current.x *= 0.8;
+                 cameraVelRef.current.y *= 0.8;
              } 
              // Standard Damped Spring Physics
              else {

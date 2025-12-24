@@ -629,12 +629,19 @@ export class PhysicsEngine {
   }
 
   public smoothRenderPositions() {
-      // Hybrid Smoothing: 
-      // 1. Damped Spring for organic, fluid-like motion.
-      // 2. Low-Pass Filter (LERP) for micro-movement stabilization.
+      // Critically Damped Spring Smoothing
+      // Reduces jitter while maintaining responsiveness
       
-      const stiffness = 0.15; // Low tension for smooth, slightly lazy follow
-      const friction = 0.92;  // High friction to dampen oscillation
+      const dt = 0.016; // Assume ~60FPS visual updates
+      
+      // Tunable parameters
+      // omega: Frequency of response (higher = faster, less lag)
+      // dampingRatio: 1.0 = critical damping (no overshoot), <1.0 = bouncy, >1.0 = sluggish
+      const omega = 18.0; 
+      const dampingRatio = 1.0;
+      
+      const k = omega * omega;
+      const c = 2 * dampingRatio * omega;
 
       this.bots.forEach(b => {
           b.particles.forEach(p => {
@@ -647,30 +654,35 @@ export class PhysicsEngine {
               const dy = targetY - p.renderPos.y;
               const distSq = dx*dx + dy*dy;
 
-              // Teleport if lag is too large (e.g. init or respawn)
+              // Teleport if lag is too large (e.g. init or respawn) to prevent smearing
               if (distSq > 5000) {
                   p.renderPos.x = targetX;
                   p.renderPos.y = targetY;
                   p.renderVel.x = 0;
                   p.renderVel.y = 0;
-              } else if (distSq < 0.05) {
-                  // Micro-movement stabilizer (Low Pass Filter)
-                  // Prevents sub-pixel jitter when static or moving very slowly
-                  p.renderPos.x += dx * 0.2;
-                  p.renderPos.y += dy * 0.2;
-                  p.renderVel.x *= 0.5; // Kill velocity
+                  return;
+              }
+              
+              // Apply Critically Damped Spring Force
+              // F = -k*x - c*v
+              // a = F (mass = 1)
+              const ax = (dx * k) - (p.renderVel.x * c);
+              const ay = (dy * k) - (p.renderVel.y * c);
+              
+              // Velocity Verlet / Euler Integration
+              p.renderVel.x += ax * dt;
+              p.renderVel.y += ay * dt;
+              
+              p.renderPos.x += p.renderVel.x * dt;
+              p.renderPos.y += p.renderVel.y * dt;
+              
+              // Fallback stabilization for very small values to prevent micro-drift when stationary
+              if (distSq < 0.2 && (p.renderVel.x*p.renderVel.x + p.renderVel.y*p.renderVel.y) < 1.0) {
+                  const lerpAlpha = 0.2;
+                  p.renderPos.x += dx * lerpAlpha;
+                  p.renderPos.y += dy * lerpAlpha;
+                  p.renderVel.x *= 0.5;
                   p.renderVel.y *= 0.5;
-              } else {
-                  // Damped Spring Physics for large movements
-                  const ax = dx * stiffness;
-                  const ay = dy * stiffness;
-                  
-                  // Semi-implicit Euler integration
-                  p.renderVel.x = (p.renderVel.x + ax) * friction;
-                  p.renderVel.y = (p.renderVel.y + ay) * friction;
-                  
-                  p.renderPos.x += p.renderVel.x;
-                  p.renderPos.y += p.renderVel.y;
               }
           });
       });

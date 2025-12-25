@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState, useRef } from 'react';
 import { Cpu, Globe, Zap, Volume2, VolumeX } from 'lucide-react';
 
@@ -73,7 +72,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({ onStart, isMuted, onTo
 
   return (
     <div 
-        className="fixed inset-0 bg-[#020408] flex flex-col items-center justify-center overflow-hidden z-[100] cursor-none"
+        className="fixed inset-0 bg-[#020408] flex flex-col items-center justify-center overflow-hidden z-[100] cursor-none animate-in fade-in zoom-in-95 duration-1000"
     >
       {/* 1. Dynamic Background Grid (Parallax) */}
       <div 
@@ -88,6 +87,13 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({ onStart, isMuted, onTo
             backgroundSize: '100% 100%, 40px 40px, 40px 40px',
         }}
       />
+
+      {/* CRT Scanline Overlay */}
+      <div className="absolute inset-0 z-0 pointer-events-none opacity-10 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] mix-blend-overlay"></div>
+      <div className="absolute inset-0 z-0 pointer-events-none" style={{
+          background: 'linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06))',
+          backgroundSize: '100% 2px, 3px 100%'
+      }}></div>
       
       {/* 2. Decorative Center Burst */}
       <div 

@@ -6,6 +6,7 @@ import { AnalysisPanel } from './components/AnalysisPanel';
 import { GenomePanel } from './components/GenomePanel';
 import { MomBotPanel } from './components/MomBotPanel';
 import { TitleScreen } from './components/TitleScreen';
+import { SplashScreen } from './components/SplashScreen';
 import { SettingsPanel } from './components/SettingsPanel';
 import { HelpModal } from './components/HelpModal';
 import { DriftPanel } from './components/DriftPanel';
@@ -18,7 +19,7 @@ import { AudioManager } from './services/audioManager';
 
 const App: React.FC = () => {
   // Application State
-  const [appState, setAppState] = useState<'TITLE' | 'SIMULATION'>('TITLE');
+  const [appState, setAppState] = useState<'SPLASH' | 'TITLE' | 'SIMULATION'>('SPLASH');
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [config, setConfig] = useState<SimulationConfig>(DEFAULT_CONFIG);
@@ -486,6 +487,10 @@ const App: React.FC = () => {
 
   return (
     <>
+      {appState === 'SPLASH' && (
+        <SplashScreen onComplete={() => setAppState('TITLE')} />
+      )}
+
       {appState === 'TITLE' && (
           <TitleScreen 
               onStart={handleStart} 

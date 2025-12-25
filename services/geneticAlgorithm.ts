@@ -1,3 +1,4 @@
+
 import { Genome, CellType } from '../types';
 import { GRID_SIZE } from '../constants';
 
@@ -113,8 +114,6 @@ function createNervousRingGenome(generation: number, targetHue?: number): Genome
 }
 
 // Ensures the genome is a single connected component
-// Uses 4-way connectivity (Orthogonal only) to prevent diagonal "hinges"
-// that look like disconnected colonies.
 export function enforceContiguity(genome: Genome): Genome {
     const genes = genome.genes.map(row => [...row]);
     const size = genome.gridSize;
@@ -171,25 +170,20 @@ export function enforceContiguity(genome: Genome): Genome {
     // Ensure at least 2 nodes to guarantee edges (springs) exist
     if (largest.length < 2) {
         const seed = largest[0];
-        // Try orthogonal neighbors first for visual cleanliness
         const neighbors = [
             {x: seed.x+1, y: seed.y}, {x: seed.x-1, y: seed.y},
             {x: seed.x, y: seed.y+1}, {x: seed.x, y: seed.y-1}
         ];
         
-        let added = false;
         for (const n of neighbors) {
             if (n.x >= 0 && n.x < size && n.y >= 0 && n.y < size) {
-                // Only grow into empty space to avoid overwriting logic
                 if (genes[n.y][n.x] === CellType.EMPTY) {
                     genes[n.y][n.x] = CellType.SKIN;
                     largest.push(n);
-                    added = true;
                     break;
                 }
             }
         }
-        // If still size 1 (extremely rare trapped case), it might die, but that's acceptable evolution
     }
 
     const keepSet = new Set(largest.map(c => `${c.x},${c.y}`));
@@ -208,8 +202,11 @@ export function enforceContiguity(genome: Genome): Genome {
     return { ...genome, genes };
 }
 
-// Shrinks a genome to a small fraction of its size, keeping connected components
-export function pruneGenome(genome: Genome, retentionRate: number = 0.15): Genome {
+/**
+ * Shrinks a genome to a target size (or fraction).
+ * @param retentionRateOrTarget If < 1, acts as percentage. If >= 1, acts as exact target node count.
+ */
+export function pruneGenome(genome: Genome, retentionRateOrTarget: number = 0.15): Genome {
     const newGenes = genome.genes.map(row => [...row]);
     const activeCells: {x: number, y: number}[] = [];
 
@@ -224,14 +221,22 @@ export function pruneGenome(genome: Genome, retentionRate: number = 0.15): Genom
 
     if (activeCells.length <= 3) return genome; // Already small
 
-    // Target size (Minimum 3 to allow movement physics)
-    const targetSize = Math.max(3, Math.floor(activeCells.length * retentionRate));
+    // Determine target size
+    let targetSize = 0;
+    if (retentionRateOrTarget >= 1) {
+        targetSize = Math.floor(retentionRateOrTarget);
+    } else {
+        targetSize = Math.floor(activeCells.length * retentionRateOrTarget);
+    }
+    
+    // Safety clamp (Min 5 to be viable offspring, Max current size)
+    targetSize = Math.max(5, Math.min(activeCells.length, targetSize));
 
     // Pick a random seed cell to keep
     const seedIndex = Math.floor(Math.random() * activeCells.length);
     const seed = activeCells[seedIndex];
     
-    // BFS to find connected neighbors to keep
+    // BFS to find connected neighbors to keep (grow seed to target size)
     const toKeep = new Set<string>();
     const queue = [seed];
     const visited = new Set<string>();
@@ -241,11 +246,17 @@ export function pruneGenome(genome: Genome, retentionRate: number = 0.15): Genom
     while (queue.length > 0 && toKeep.size < targetSize) {
         const curr = queue.shift()!;
         
-        // 4-Way Neighbors for pruning (Consistency with enforceContiguity)
+        // 4-Way Neighbors
         const neighbors = [
             {x: curr.x+1, y: curr.y}, {x: curr.x-1, y: curr.y},
             {x: curr.x, y: curr.y+1}, {x: curr.x, y: curr.y-1}
         ];
+
+        // Shuffle neighbors to avoid directional bias in pruning
+        for (let i = neighbors.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [neighbors[i], neighbors[j]] = [neighbors[j], neighbors[i]];
+        }
 
         for (const n of neighbors) {
             if (n.x >= 0 && n.x < genome.gridSize && n.y >= 0 && n.y < genome.gridSize) {
@@ -272,8 +283,50 @@ export function pruneGenome(genome: Genome, retentionRate: number = 0.15): Genom
         }
     }
 
-    // Safety run to ensure contiguity after pruning
     return enforceContiguity({ ...genome, genes: newGenes });
+}
+
+// Finds a valid empty spot next to existing structure and adds a random cell
+export function addStructuralNode(genome: Genome): { newGenome: Genome, addedX: number, addedY: number } | null {
+    const newGenes = genome.genes.map(row => [...row]);
+    const candidates: {x: number, y: number}[] = [];
+    
+    for(let y=0; y<genome.gridSize; y++) {
+        for(let x=0; x<genome.gridSize; x++) {
+            if (newGenes[y][x] === CellType.EMPTY) {
+                // Check if neighbor to occupied
+                const neighbors = [
+                    {x: x+1, y}, {x: x-1, y}, {x, y: y+1}, {x, y: y-1}
+                ];
+                const hasNeighbor = neighbors.some(n => 
+                    n.x >= 0 && n.x < genome.gridSize && n.y >= 0 && n.y < genome.gridSize && 
+                    newGenes[n.y][n.x] !== CellType.EMPTY
+                );
+                
+                if (hasNeighbor) {
+                    candidates.push({x, y});
+                }
+            }
+        }
+    }
+    
+    if (candidates.length === 0) return null;
+    
+    const target = candidates[Math.floor(Math.random() * candidates.length)];
+    
+    // 50% Skin, 30% Muscle, 20% Neuron
+    const r = Math.random();
+    let type = CellType.SKIN;
+    if (r > 0.5) type = CellType.HEART;
+    if (r > 0.8) type = CellType.NEURON;
+    
+    newGenes[target.y][target.x] = type;
+    
+    return {
+        newGenome: { ...genome, genes: newGenes },
+        addedX: target.x,
+        addedY: target.y
+    };
 }
 
 function crossover(parentA: Genome, parentB: Genome, generation: number): Genome {
@@ -290,29 +343,6 @@ function crossover(parentA: Genome, parentB: Genome, generation: number): Genome
 
   const color = Math.random() > 0.5 ? parentA.color : parentB.color;
 
-  const posXA = parentA.originX ?? 0;
-  const posXB = parentB.originX ?? 0;
-  const posYA = parentA.originY ?? 0;
-  const posYB = parentB.originY ?? 0;
-  
-  const dist = Math.sqrt(Math.pow(posXA - posXB, 2) + Math.pow(posYA - posYB, 2));
-  
-  let originX = posXA;
-  let originY = posYA;
-  
-  if (dist < 300) {
-      originX = (posXA + posXB) / 2;
-      originY = (posYA + posYB) / 2;
-  } else {
-      if (color === parentA.color) {
-          originX = posXA;
-          originY = posYA;
-      } else {
-          originX = posXB;
-          originY = posYB;
-      }
-  }
-
   const child = {
     id: Math.random().toString(36).substr(2, 9),
     gridSize: size,
@@ -321,15 +351,13 @@ function crossover(parentA: Genome, parentB: Genome, generation: number): Genome
     generation,
     color,
     bioelectricMemory: (parentA.bioelectricMemory + parentB.bioelectricMemory) / 2,
-    originX,
-    originY
+    originX: parentA.originX,
+    originY: parentA.originY
   };
 
-  // Enforce Contiguity
   let processed = enforceContiguity(child);
-  
-  // Revised: Higher retention (0.9) to prevent instant degeneration of morphology
-  return pruneGenome(processed, 0.9);
+  // Crossover usually results in large chaotic structures, prune to stable size ~12
+  return pruneGenome(processed, 12); 
 }
 
 export function mutate(genome: Genome): Genome {
@@ -341,7 +369,6 @@ export function mutate(genome: Genome): Genome {
     for (let y = 1; y < genome.gridSize - 1; y++) {
       for (let x = 1; x < genome.gridSize - 1; x++) {
         if (newGenes[y][x] === CellType.EMPTY && Math.random() < 0.1) {
-            // Check orthogonal neighbors for growth
             const neighbors = [newGenes[y+1][x], newGenes[y-1][x], newGenes[y][x+1], newGenes[y][x-1]];
             if (neighbors.some(n => n !== CellType.EMPTY)) {
                 newGenes[y][x] = Math.random() > 0.5 ? CellType.SKIN : CellType.NEURON;
@@ -350,20 +377,6 @@ export function mutate(genome: Genome): Genome {
         }
       }
     }
-  }
-
-  // 2. Platonic Pull
-  if (Math.random() < 0.4) { 
-      const x = Math.floor(Math.random() * genome.gridSize);
-      const y = Math.floor(Math.random() * genome.gridSize);
-      const idealType = PLATONIC_IDEAL_MAP[`${x},${y}`];
-      
-      if (idealType !== undefined && newGenes[y][x] !== idealType) {
-          if (Math.random() < 0.1) {
-              newGenes[y][x] = idealType;
-              mutated = true;
-          }
-      }
   }
 
   // 3. Random Noise Mutation
@@ -419,14 +432,11 @@ export function evolvePopulation(population: Genome[], generation: number, maxPo
   
   const evolveSubPool = (pool: Genome[], currentMax: number): Genome[] => {
       if (pool.length === 0) return [];
-      
       const sorted = [...pool].sort((a, b) => b.fitness - a.fitness);
-      
       const growthTarget = Math.max(1, Math.floor(pool.length * 0.10));
       const limit = Math.min(currentMax, pool.length + growthTarget);
       
       const nextGen = [...sorted];
-      
       let attempts = 0;
       while (nextGen.length < limit && attempts < 100) {
           const p1 = tournamentSelect(sorted);
@@ -436,7 +446,6 @@ export function evolvePopulation(population: Genome[], generation: number, maxPo
           nextGen.push(child);
           attempts++;
       }
-      
       return nextGen;
   };
 

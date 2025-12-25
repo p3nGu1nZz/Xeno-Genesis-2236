@@ -27,6 +27,8 @@ export interface Particle {
   charge: number; 
   isFixed?: boolean;
   phase: number; // Topological phase for metachronal rhythm
+  gx?: number; // Grid X coordinate in genome
+  gy?: number; // Grid Y coordinate in genome
 }
 
 export interface Spring {

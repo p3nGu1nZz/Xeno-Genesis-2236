@@ -1,3 +1,4 @@
+
 import {
   Xenobot,
   Particle,
@@ -19,13 +20,15 @@ import {
   METABOLIC_DECAY,
   INITIAL_YOLK_ENERGY,
   MITOSIS_THRESHOLD,
+  GROWTH_COST,
+  MAX_BOT_SIZE,
   FOOD_ENERGY,
   FOOD_RADIUS,
   SURFACE_TENSION,
   BREAKING_THRESHOLD,
   COLLISION_RADIUS
 } from '../constants';
-import { evolvePopulation as algoEvolve, mutate, pruneGenome } from './geneticAlgorithm';
+import { evolvePopulation as algoEvolve, mutate, pruneGenome, addStructuralNode } from './geneticAlgorithm';
 
 const uid = () => Math.random().toString(36).substr(2, 9);
 const MAX_FORCE = 40.0; 
@@ -89,7 +92,9 @@ export class PhysicsEngine {
              force: { x: 0, y: 0 },
              charge: 0,
              isFixed: false,
-             phase: x * 0.6 + y * 0.1
+             phase: x * 0.6 + y * 0.1,
+             gx: x,
+             gy: y
            });
            particleMap[y][x] = particles.length - 1;
         }
@@ -221,10 +226,17 @@ export class PhysicsEngine {
 
         const energyGained = this.checkFoodConsumption(bot);
         
-        // RESTORED: Irruption sensitivity for visuals
         bot.irruption = Math.min(1.0, bot.totalCharge * 0.0002);
         bot.absorption = Math.min(1.0, (energyGained > 0 ? 0.5 : 0));
 
+        // 1. VEGETATIVE GROWTH (Internal Node Mitosis)
+        // Check if we can grow the colony body first
+        if (bot.energy > GROWTH_COST && bot.particles.length < MAX_BOT_SIZE && Math.random() < 0.02) {
+             this.attemptVegetativeGrowth(bot);
+        }
+
+        // 2. REPRODUCTION (Colony Mitosis)
+        // If really successful, spawn a child colony (seed)
         if (bot.energy > MITOSIS_THRESHOLD && 
             bot.age > 800 && 
             (botCount + newBots.length) < maxBots &&
@@ -243,6 +255,126 @@ export class PhysicsEngine {
     if (this.food.length < this.config.foodCount * 0.8) {
         this.spawnFood();
     }
+  }
+
+  // Attempts to add a physical node to the running bot
+  private attemptVegetativeGrowth(bot: Xenobot) {
+      const growthResult = addStructuralNode(bot.genome);
+      if (!growthResult) return;
+
+      const { newGenome, addedX, addedY } = growthResult;
+      
+      // Build a map of actual "gx,gy" -> particleIndex from the RUNNING particles array
+      // This is critical because particle array order may not match grid order after mutations/growth
+      const gridToActualIndex = new Map<string, number>();
+      bot.particles.forEach((p, i) => {
+          if (p.gx !== undefined && p.gy !== undefined) {
+             gridToActualIndex.set(`${p.gx},${p.gy}`, i);
+          }
+      });
+
+      // Calculate physics position based on a neighbor
+      const neighbors = [
+          {dx:1, dy:0}, {dx:-1, dy:0}, {dx:0, dy:1}, {dx:0, dy:-1}
+      ];
+      
+      let referenceParticle: Particle | null = null;
+      let dx = 0, dy = 0;
+
+      for (const n of neighbors) {
+          const nx = addedX + n.dx;
+          const ny = addedY + n.dy;
+          const neighborKey = `${nx},${ny}`;
+          
+          if (gridToActualIndex.has(neighborKey)) {
+               const pIdx = gridToActualIndex.get(neighborKey)!;
+               if (bot.particles[pIdx]) {
+                   referenceParticle = bot.particles[pIdx];
+                   dx = -n.dx; // Direction FROM neighbor TO new node
+                   dy = -n.dy;
+                   break;
+               }
+          }
+      }
+
+      if (!referenceParticle) return;
+
+      // Create Physical Particle
+      const scale = this.config.gridScale || 60;
+      const spawnX = referenceParticle.pos.x + dx * scale;
+      const spawnY = referenceParticle.pos.y + dy * scale;
+      
+      const type = newGenome.genes[addedY][addedX];
+      let mass = 1.0; 
+      if (type === CellType.HEART) mass = 1.2; 
+      if (type === CellType.NEURON) mass = 1.0; 
+
+      const newParticle: Particle = {
+          pos: { x: spawnX, y: spawnY },
+          oldPos: { x: spawnX, y: spawnY },
+          renderPos: { x: spawnX, y: spawnY },
+          renderVel: { x: 0, y: 0 },
+          mass,
+          force: { x: 0, y: 0 },
+          charge: 0,
+          isFixed: false,
+          phase: addedX * 0.6 + addedY * 0.1,
+          gx: addedX,
+          gy: addedY
+      };
+
+      bot.particles.push(newParticle);
+      const newPIdx = bot.particles.length - 1;
+      
+      // Update mapping to include new particle for completeness (though springs connect to existing)
+      gridToActualIndex.set(`${addedX},${addedY}`, newPIdx);
+
+      // Update Genome Reference
+      bot.genome = newGenome;
+      bot.energy -= GROWTH_COST;
+
+      // Add Springs (Connect to all valid neighbors)
+      const springNeighbors = [
+        { dx: 1, dy: 0, dist: 1 },
+        { dx: 0, dy: 1, dist: 1 },
+        { dx: 1, dy: 1, dist: 1.414 },
+        { dx: -1, dy: 1, dist: 1.414 },
+        { dx: -1, dy: 0, dist: 1 },
+        { dx: 0, dy: -1, dist: 1 },
+        { dx: -1, dy: -1, dist: 1.414 },
+        { dx: 1, dy: -1, dist: 1.414 }
+      ];
+
+      for (const n of springNeighbors) {
+          const nx = addedX + n.dx;
+          const ny = addedY + n.dy;
+          const neighborKey = `${nx},${ny}`;
+          
+          if (gridToActualIndex.has(neighborKey)) {
+               const neighborPIdx = gridToActualIndex.get(neighborKey)!;
+               
+               const type1 = type;
+               const type2 = newGenome.genes[ny][nx]; 
+               const isMuscle = (type1 === CellType.HEART || type2 === CellType.HEART);
+               const isNeuron = (type1 === CellType.NEURON || type2 === CellType.NEURON);
+               
+               let stiffness = 1.0; 
+               if (type1 === CellType.NEURON && type2 === CellType.NEURON) stiffness = 1.25; 
+               else if (isNeuron) stiffness = 1.15;
+               else if (isMuscle) stiffness = 0.9; 
+
+               bot.springs.push({
+                    p1: newPIdx,
+                    p2: neighborPIdx,
+                    restLength: n.dist * scale,
+                    currentRestLength: n.dist * scale,
+                    stiffness,
+                    isMuscle,
+                    phaseOffset: (addedX + addedY) * 0.5 
+               });
+          }
+      }
+      this.events.push('EAT'); // Reuse sound for growth pop
   }
 
   private checkFoodConsumption(bot: Xenobot): number {
@@ -288,20 +420,30 @@ export class PhysicsEngine {
   private performMitosis(bot: Xenobot): Xenobot | null {
       bot.energy /= 2;
       this.events.push('MITOSIS');
+      
       let childGenome = mutate(bot.genome);
-      // REVISED: Higher retention (0.9) to preserve morphology of successful parents.
-      // Small seeds struggle to move in this physics environment.
-      childGenome = pruneGenome(childGenome, 0.9);
+      
+      // REVISED: Specific logic for "Offspring Colonies"
+      // We prune the genome down to exactly 5-6 nodes to create a "seed"
+      // This forces the child to regrow and evolve its structure
+      childGenome = pruneGenome(childGenome, 6); 
       
       // Randomize offset to prevent stacking
       const angle = Math.random() * Math.PI * 2;
-      const distance = 80 + Math.random() * 40;
+      const distance = 100 + Math.random() * 50;
       const ox = Math.cos(angle) * distance;
       const oy = Math.sin(angle) * distance;
       
       const child = this.createBot(childGenome, bot.centerOfMass.x + ox, bot.centerOfMass.y + oy);
       child.groupId = bot.groupId;
       child.energy = bot.energy; 
+      
+      // Impulse to separate
+      child.particles.forEach(p => {
+          p.pos.x += ox * 0.1;
+          p.pos.y += oy * 0.1;
+      });
+
       return child;
   }
 
@@ -384,37 +526,106 @@ export class PhysicsEngine {
       return activeCharge;
   }
 
-  private resolveConstraints(bot: Xenobot) {
-      // JITTER FIX: Increase iterations instead of overdamping
-      const iterations = CONSTRAINT_ITERATIONS * 2; 
-      const springs = bot.springs;
-      const particles = bot.particles;
-      const rate = 0.15; 
+  // Optimized Spatial Hash Collision Detection
+  private resolveCollisions(botCount: number) {
+      const GRID_CELL_SIZE = 400; // Broadphase cell size
+      const grid = new Map<string, Xenobot[]>();
 
-      for (let i = 0; i < iterations; i++) {
-          for (const s of springs) {
-              const p1 = particles[s.p1];
-              const p2 = particles[s.p2];
+      // 1. Build Grid
+      for (let i = 0; i < botCount; i++) {
+          const bot = this.bots[i];
+          if (bot.isDead) continue;
+          
+          const gx = Math.floor(bot.centerOfMass.x / GRID_CELL_SIZE);
+          const gy = Math.floor(bot.centerOfMass.y / GRID_CELL_SIZE);
+          const key = `${gx},${gy}`;
+          
+          if (!grid.has(key)) grid.set(key, []);
+          grid.get(key)!.push(bot);
+      }
 
-              const dx = p1.pos.x - p2.pos.x;
-              const dy = p1.pos.y - p2.pos.y;
-              const dist = Math.sqrt(dx*dx + dy*dy);
+      // 2. Query Neighbors (3x3 grid)
+      const neighborOffsets = [
+          [0,0], [1,0], [-1,0], [0,1], [0,-1],
+          [1,1], [1,-1], [-1,1], [-1,-1]
+      ];
+
+      for (let i = 0; i < botCount; i++) {
+          const b1 = this.bots[i];
+          if (b1.isDead) continue;
+          
+          const gx = Math.floor(b1.centerOfMass.x / GRID_CELL_SIZE);
+          const gy = Math.floor(b1.centerOfMass.y / GRID_CELL_SIZE);
+
+          for (const offset of neighborOffsets) {
+              const nKey = `${gx + offset[0]},${gy + offset[1]}`;
+              const neighbors = grid.get(nKey);
               
-              if (dist < 0.0001) continue; 
+              if (!neighbors) continue;
 
-              const diff = (dist - s.currentRestLength) / dist;
-              const moveX = dx * diff * rate;
-              const moveY = dy * diff * rate;
+              for (const b2 of neighbors) {
+                  // Avoid duplicate checks (id comparison ensures only checking pair once)
+                  if (b1.id >= b2.id) continue;
+                  
+                  // Optimized Broadphase
+                  const dx = b1.centerOfMass.x - b2.centerOfMass.x;
+                  const dy = b1.centerOfMass.y - b2.centerOfMass.y;
+                  const distSq = dx*dx + dy*dy;
+                  
+                  if (distSq > 160000) continue; // Broadphase rejection
 
-              const invM1 = 1 / p1.mass;
-              const invM2 = 1 / p2.mass;
-              const totalM = invM1 + invM2;
+                  // Particle-Particle Narrowphase
+                  for (const p1 of b1.particles) {
+                      for (const p2 of b2.particles) {
+                          const pdx = p1.pos.x - p2.pos.x;
+                          const pdy = p1.pos.y - p2.pos.y;
+                          const pDistSq = pdx*pdx + pdy*pdy;
+                          const minDist = COLLISION_RADIUS * 2;
+                          
+                          if (pDistSq < minDist * minDist && pDistSq > 0.0001) {
+                              const pDist = Math.sqrt(pDistSq);
+                              const overlap = minDist - pDist;
+                              const nx = pdx / pDist;
+                              const ny = pdy / pDist;
+                              
+                              const moveX = nx * overlap * 0.15; 
+                              const moveY = ny * overlap * 0.15;
 
-              if (totalM > 0) {
-                  p1.pos.x -= moveX * (invM1 / totalM);
-                  p1.pos.y -= moveY * (invM1 / totalM);
-                  p2.pos.x += moveX * (invM2 / totalM);
-                  p2.pos.y += moveY * (invM2 / totalM);
+                              p1.pos.x += moveX;
+                              p1.pos.y += moveY;
+                              p2.pos.x -= moveX;
+                              p2.pos.y -= moveY;
+
+                              b1.lastCollisionTime = Date.now();
+                              b1.lastCollisionPoint = { x: (p1.pos.x + p2.pos.x) * 0.5, y: (p1.pos.y + p2.pos.y) * 0.5 };
+
+                              // === Energy Transfer based on Mind-Body Operators ===
+                              
+                              // 1. Structural Stress (Base Friction)
+                              // Collisions tax the organism
+                              const stress = overlap * 0.3;
+                              b1.energy = Math.max(0, b1.energy - stress);
+                              b2.energy = Math.max(0, b2.energy - stress);
+
+                              // 2. Absorption (Conscious Experience)
+                              // Ability to integrate material shock as metabolic potential
+                              // Absorption range 0-1. 
+                              if (b1.absorption > 0) b1.energy += overlap * b1.absorption * 0.8;
+                              if (b2.absorption > 0) b2.energy += overlap * b2.absorption * 0.8;
+
+                              // 3. Irruption (Mental Causation / Will)
+                              // "Will to Power" - Dominance of internal state over external matter (other bot)
+                              // Transfers energy from the weaker will to the stronger will
+                              const irruptionDiff = b1.irruption - b2.irruption;
+                              // If b1 > b2, diff is positive, transfer is positive (b2 -> b1)
+                              const transfer = irruptionDiff * overlap * 3.0;
+                              
+                              b1.energy += transfer;
+                              b2.energy -= transfer;
+                              // === End Energy Transfer ===
+                          }
+                      }
+                  }
               }
           }
       }
@@ -499,6 +710,50 @@ export class PhysicsEngine {
     }
   }
 
+  private resolveConstraints(bot: Xenobot) {
+      if (CONSTRAINT_ITERATIONS > 0) {
+          for (let k = 0; k < CONSTRAINT_ITERATIONS; k++) {
+              for (const s of bot.springs) {
+                  const p1 = bot.particles[s.p1];
+                  const p2 = bot.particles[s.p2];
+                  
+                  const dx = p1.pos.x - p2.pos.x;
+                  const dy = p1.pos.y - p2.pos.y;
+                  const dist = Math.sqrt(dx*dx + dy*dy);
+                  
+                  if (dist < 0.0001) continue;
+                  
+                  // Simple distance constraint relaxation to prevent extreme stretching
+                  const maxLen = s.restLength * 2.0;
+                  if (dist > maxLen) {
+                      const diff = dist - maxLen;
+                      const correction = diff / dist * 0.5;
+                      const moveX = dx * correction;
+                      const moveY = dy * correction;
+                      
+                      if (!p1.isFixed) {
+                          p1.pos.x -= moveX;
+                          p1.pos.y -= moveY;
+                      }
+                      if (!p2.isFixed) {
+                          p2.pos.x += moveX;
+                          p2.pos.y += moveY;
+                      }
+                  }
+              }
+          }
+      }
+      
+      if (this.groundY !== 0) {
+           for (const p of bot.particles) {
+               if (p.pos.y > this.groundY) {
+                   p.pos.y = this.groundY;
+                   // Simple floor collision logic could go here
+               }
+           }
+      }
+  }
+
   private calculateCiliaForce(bot: Xenobot, time: number) {
       const hx = Math.cos(bot.heading);
       const hy = Math.sin(bot.heading);
@@ -521,86 +776,6 @@ export class PhysicsEngine {
       const cy = thrust * (hy + turn * hx);
       
       return { cx, cy };
-  }
-
-  // Optimized Spatial Hash Collision Detection
-  private resolveCollisions(botCount: number) {
-      const GRID_CELL_SIZE = 400; // Broadphase cell size
-      const grid = new Map<string, Xenobot[]>();
-
-      // 1. Build Grid
-      for (let i = 0; i < botCount; i++) {
-          const bot = this.bots[i];
-          if (bot.isDead) continue;
-          
-          const gx = Math.floor(bot.centerOfMass.x / GRID_CELL_SIZE);
-          const gy = Math.floor(bot.centerOfMass.y / GRID_CELL_SIZE);
-          const key = `${gx},${gy}`;
-          
-          if (!grid.has(key)) grid.set(key, []);
-          grid.get(key)!.push(bot);
-      }
-
-      // 2. Query Neighbors (3x3 grid)
-      const neighborOffsets = [
-          [0,0], [1,0], [-1,0], [0,1], [0,-1],
-          [1,1], [1,-1], [-1,1], [-1,-1]
-      ];
-
-      for (let i = 0; i < botCount; i++) {
-          const b1 = this.bots[i];
-          if (b1.isDead) continue;
-          
-          const gx = Math.floor(b1.centerOfMass.x / GRID_CELL_SIZE);
-          const gy = Math.floor(b1.centerOfMass.y / GRID_CELL_SIZE);
-
-          for (const offset of neighborOffsets) {
-              const nKey = `${gx + offset[0]},${gy + offset[1]}`;
-              const neighbors = grid.get(nKey);
-              
-              if (!neighbors) continue;
-
-              for (const b2 of neighbors) {
-                  // Avoid duplicate checks (id comparison ensures only checking pair once)
-                  if (b1.id >= b2.id) continue;
-                  
-                  // Optimized Broadphase
-                  const dx = b1.centerOfMass.x - b2.centerOfMass.x;
-                  const dy = b1.centerOfMass.y - b2.centerOfMass.y;
-                  const distSq = dx*dx + dy*dy;
-                  
-                  if (distSq > 160000) continue; // Broadphase rejection
-
-                  // Particle-Particle Narrowphase
-                  for (const p1 of b1.particles) {
-                      for (const p2 of b2.particles) {
-                          const pdx = p1.pos.x - p2.pos.x;
-                          const pdy = p1.pos.y - p2.pos.y;
-                          const pDistSq = pdx*pdx + pdy*pdy;
-                          const minDist = COLLISION_RADIUS * 2;
-                          
-                          if (pDistSq < minDist * minDist && pDistSq > 0.0001) {
-                              const pDist = Math.sqrt(pDistSq);
-                              const overlap = minDist - pDist;
-                              const nx = pdx / pDist;
-                              const ny = pdy / pDist;
-                              
-                              const moveX = nx * overlap * 0.15; 
-                              const moveY = ny * overlap * 0.15;
-
-                              p1.pos.x += moveX;
-                              p1.pos.y += moveY;
-                              p2.pos.x -= moveX;
-                              p2.pos.y -= moveY;
-
-                              b1.lastCollisionTime = Date.now();
-                              b1.lastCollisionPoint = { x: (p1.pos.x + p2.pos.x) * 0.5, y: (p1.pos.y + p2.pos.y) * 0.5 };
-                          }
-                      }
-                  }
-              }
-          }
-      }
   }
 
   public evolvePopulation(generation: number): boolean {

@@ -322,7 +322,7 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
         // Critical Energy Warning (Pulsating Aura)
         if (bot.energy < 1000) {
             const criticality = 1.0 - Math.max(0, bot.energy / 1000); // 0 to 1 scaling based on energy loss
-            const time = Date.now() * 0.005; // Slow pulse
+            const time = Date.now() * 0.002; // Slower pulse (reduced from 0.005)
             const pulse = 0.5 + 0.5 * Math.sin(time + (bot.id.charCodeAt(0) || 0)); // Offset phase by ID
             
             // Inner failing glow
@@ -438,7 +438,7 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
             
             // Visual Cue: Pulsating effect for critical energy (< 300)
             if (bot.energy < 300) {
-                 const pulse = 0.5 + 0.5 * Math.sin(Date.now() * 0.01);
+                 const pulse = 0.5 + 0.5 * Math.sin(Date.now() * 0.002); // Slower pulse
                  ctx.globalAlpha = 0.5 + pulse * 0.5;
             } else {
                  ctx.globalAlpha = 1.0;

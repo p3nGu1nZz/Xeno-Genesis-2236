@@ -13,7 +13,7 @@ export const DEFAULT_CONFIG: SimulationConfig = {
   gravity: 0.0, 
   friction: 0.98, // Increased friction for stability with lower sub-steps
   muscleStrength: 0.7, // Slightly reduced to prevent violent pulsing
-  muscleSpeed: 0.05, // Slower, more organic beat
+  muscleSpeed: 0.02, // Slower, more organic beat
   groundHeight: 0, 
   gridScale: 60, 
   bioelectricDecay: 0.999, 

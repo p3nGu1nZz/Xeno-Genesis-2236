@@ -236,6 +236,8 @@ export class PhysicsEngine {
         this.bots.push(...newBots);
     }
 
+    // Apply visual smoothing (Damped Spring System)
+    // Must be called here to update render positions for the canvas
     this.smoothRenderPositions();
 
     if (this.food.length < this.config.foodCount * 0.8) {
@@ -314,7 +316,8 @@ export class PhysicsEngine {
           if (s.isMuscle) {
               bot.energy -= decayFactor;
               const avgCharge = (p1.charge + p2.charge) * 0.5;
-              const freqMod = 1.0 + avgCharge * 4.0; 
+              // Adjusted frequency modulator to be less aggressive with high charge
+              const freqMod = 1.0 + avgCharge * 0.2; 
               
               const contraction = Math.sin(time * mSpeed * freqMod + (s.phaseOffset || 0));
               // Reduced amplitude (0.35) to prevent visual jittering/pulsing artifacts
@@ -643,15 +646,19 @@ export class PhysicsEngine {
   }
 
   public smoothRenderPositions() {
-      // Damped Spring Smoothing (Low-Pass Filter)
-      // Replaces simple LERP with a mass-spring-damper for organic, jitter-free motion
-      const dt = 1.0 / 60.0; // Fixed visual timestep assumption
-      const tension = 180.0; // Stiffness: Controls tracking speed
-      const damping = 26.0;  // Damping: Controls oscillation (Critical ~= 2*sqrt(tension))
-                             // 2*sqrt(180) ~= 26.8. Using 26.0 is slightly underdamped.
+      // Damped Spring System (Low-Pass Filter)
+      // Visual timestep ~ 60fps
+      const dt = 1.0 / 60.0; 
+      
+      // Tuned for high responsiveness and zero jitter
+      // Tension 900 -> wn = 30 rad/s (~4.7 Hz) - Fast Response
+      // Damping 60 -> Critical (2*sqrt(900) = 60) - No overshoot
+      const tension = 900.0; 
+      const damping = 60.0;
 
       this.bots.forEach(b => {
           b.particles.forEach(p => {
+              // Ensure velocity state exists
               if (!p.renderVel) p.renderVel = { x: 0, y: 0 };
 
               const targetX = p.pos.x;
@@ -661,8 +668,8 @@ export class PhysicsEngine {
               const dy = targetY - p.renderPos.y;
               const distSq = dx*dx + dy*dy;
               
-              // Teleport / Reset if divergence is too high (e.g. initialization or layout change)
-              if (distSq > 3600) { // 60px radius
+              // Teleport / Reset if divergence is too high (e.g. initialization or large position reset)
+              if (distSq > 4900) { // 70px radius
                   p.renderPos.x = targetX;
                   p.renderPos.y = targetY;
                   p.renderVel.x = 0;

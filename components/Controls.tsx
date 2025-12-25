@@ -1,13 +1,16 @@
 
 import React from 'react';
-import { Play, Pause, Zap, Settings, PanelLeftClose, PanelLeftOpen, Dna, Network, TrendingUp, FlaskConical, Lock } from 'lucide-react';
-import { UpgradeID } from '../types';
+import { Play, Pause, Zap, Settings, PanelLeftClose, PanelLeftOpen, Dna, Network, TrendingUp, FlaskConical, Lock, Scan, Syringe, Biohazard, Skull, CircleDashed, Sprout } from 'lucide-react';
+import { UpgradeID, ToolMode } from '../types';
+import { TOOL_COLORS, TOOL_COSTS } from '../constants';
 
 interface ControlsProps {
   isRunning: boolean;
   generation: number;
   timeRemaining: number;
   evolutionProgress: number;
+  growthProgress: number;      // New Prop
+  reproductionProgress: number; // New Prop
   onTogglePlay: () => void;
   onAnalyze: () => void;
   onOpenSettings: () => void;
@@ -24,12 +27,18 @@ interface ControlsProps {
   bioData: number;
   unlockedUpgrades: UpgradeID[];
   onOpenResearch: () => void;
+
+  // Tools
+  activeTool: ToolMode;
+  onSelectTool: (tool: ToolMode) => void;
 }
 
 export const Controls: React.FC<ControlsProps> = ({
   isRunning,
   generation,
   evolutionProgress,
+  growthProgress,
+  reproductionProgress,
   onTogglePlay,
   onOpenSettings,
   isCollapsed,
@@ -41,12 +50,22 @@ export const Controls: React.FC<ControlsProps> = ({
   onToggleDriftPanel,
   bioData,
   unlockedUpgrades,
-  onOpenResearch
+  onOpenResearch,
+  activeTool,
+  onSelectTool
 }) => {
 
   const isGenomeUnlocked = unlockedUpgrades.includes('GENOME_SEQUENCER');
   const isMomBotUnlocked = unlockedUpgrades.includes('MOMBOT_LINK');
   const isDriftUnlocked = unlockedUpgrades.includes('DRIFT_ANALYSIS');
+
+  // Tool Config for rendering
+  const tools = [
+      { id: 'SCANNER', icon: Scan, cost: 0, color: TOOL_COLORS.SCANNER, label: 'SCAN' },
+      { id: 'INJECTOR', icon: Syringe, cost: 50, color: TOOL_COLORS.INJECTOR, label: 'FEED' },
+      { id: 'MUTAGEN', icon: Biohazard, cost: 250, color: TOOL_COLORS.MUTAGEN, label: 'MUTATE' },
+      { id: 'REAPER', icon: Skull, cost: 0, color: TOOL_COLORS.REAPER, label: 'CULL' }
+  ];
 
   return (
     <>
@@ -68,8 +87,23 @@ export const Controls: React.FC<ControlsProps> = ({
                 
                 <div className="h-8 w-px bg-slate-800"></div>
 
-                <div className="flex flex-col items-center min-w-[100px]">
-                    <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                <div className="flex flex-col gap-1 min-w-[100px]">
+                    {/* Reproduction (White) */}
+                    <div className="w-full h-1 bg-slate-800 rounded-full overflow-hidden">
+                        <div 
+                            className="h-full bg-white shadow-[0_0_8px_#ffffff]" 
+                            style={{ width: `${reproductionProgress * 100}%`, transition: 'width 0.2s linear' }}
+                        ></div>
+                    </div>
+                     {/* Growth (Yellow) */}
+                    <div className="w-full h-1 bg-slate-800 rounded-full overflow-hidden">
+                        <div 
+                            className="h-full bg-yellow-400 shadow-[0_0_8px_#facc15]" 
+                            style={{ width: `${growthProgress * 100}%`, transition: 'width 0.2s linear' }}
+                        ></div>
+                    </div>
+                     {/* Evolution (Cyan) */}
+                    <div className="w-full h-1 bg-slate-800 rounded-full overflow-hidden">
                         <div 
                             className="h-full bg-neon-cyan shadow-[0_0_8px_#00f3ff]" 
                             style={{ width: `${evolutionProgress * 100}%`, transition: 'width 0.1s linear' }}
@@ -79,6 +113,30 @@ export const Controls: React.FC<ControlsProps> = ({
               </div>
           </div>
       )}
+
+      {/* GOD TOOLS TOOLBAR (Bottom Center) */}
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-slate-950/90 backdrop-blur-md border border-slate-700 rounded-full p-2 flex gap-2 shadow-2xl">
+          {tools.map((t) => (
+              <button
+                  key={t.id}
+                  onClick={() => onSelectTool(t.id as ToolMode)}
+                  className={`relative group p-3 rounded-full transition-all border ${
+                      activeTool === t.id 
+                        ? 'bg-slate-800 border-white text-white shadow-[0_0_15px_rgba(255,255,255,0.2)]' 
+                        : 'bg-transparent border-transparent text-slate-500 hover:text-white hover:bg-slate-900'
+                  }`}
+                  style={{ borderColor: activeTool === t.id ? t.color : undefined }}
+                  title={`${t.label} ${t.cost > 0 ? `(${t.cost} BD)` : ''}`}
+              >
+                  <t.icon size={20} style={{ color: activeTool === t.id ? t.color : undefined }} />
+                  
+                  {/* Label Tooltip */}
+                  <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-black px-2 py-1 rounded text-[10px] font-mono whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity border border-slate-800 text-white pointer-events-none">
+                      {t.label} {t.cost > 0 && <span className="text-neon-magenta">{t.cost} BD</span>}
+                  </div>
+              </button>
+          ))}
+      </div>
 
       <div 
         className={`relative z-30 h-full bg-slate-900/80 border-r border-slate-800 backdrop-blur-md transition-all duration-500 flex flex-col ${isCollapsed ? 'w-16' : 'w-80'}`}
@@ -171,24 +229,56 @@ export const Controls: React.FC<ControlsProps> = ({
               </div>
 
               <div className="space-y-4 font-mono">
-                  <div className="bg-slate-950 p-4 rounded border border-slate-800 relative overflow-hidden group">
-                      {/* Progress Bar */}
-                      <div className="absolute top-0 left-0 w-full h-1 bg-slate-800">
-                          <div 
-                             className="h-full bg-neon-cyan shadow-[0_0_10px_#00f3ff]" 
-                             style={{ width: `${evolutionProgress * 100}%`, transition: 'width 0.1s linear' }}
-                          ></div>
+                  {/* MAIN STATUS DISPLAY */}
+                  <div className="bg-slate-950 p-4 rounded border border-slate-800 relative overflow-hidden group space-y-3">
+                      
+                      <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                          <span className="text-xs text-slate-400 font-bold">COLONY STATUS</span>
+                          <span className="text-lg text-white font-display">{generation.toString().padStart(4, '0')}</span>
                       </div>
 
-                      <div className="absolute top-0 right-0 p-2 opacity-20 group-hover:opacity-40 transition-opacity">
-                          <Zap size={40} className="text-yellow-500"/>
+                      {/* 1. REPRODUCTION BAR (WHITE) */}
+                      <div className="space-y-1">
+                          <div className="flex justify-between text-[10px] text-slate-500">
+                              <span className="flex items-center gap-1"><CircleDashed size={10} className="text-white"/> REPRODUCTION</span>
+                              <span className="text-white">{Math.floor(reproductionProgress * 100)}%</span>
+                          </div>
+                          <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                             <div 
+                                className="h-full bg-white shadow-[0_0_8px_#ffffff]" 
+                                style={{ width: `${reproductionProgress * 100}%`, transition: 'width 0.2s linear' }}
+                             ></div>
+                          </div>
                       </div>
-                      <div className="text-slate-500 text-xs uppercase mb-1 mt-1">Evolution Cycle</div>
-                      <div className="text-4xl text-white font-display">{generation.toString().padStart(4, '0')}</div>
-                      <div className="flex justify-between items-end mt-2">
-                           <span className="text-[10px] text-slate-500">NEXT MUTATION</span>
-                           <span className="text-xs text-neon-cyan font-bold">{Math.floor(evolutionProgress * 100)}%</span>
+
+                      {/* 2. GROWTH BAR (YELLOW) */}
+                      <div className="space-y-1">
+                          <div className="flex justify-between text-[10px] text-slate-500">
+                              <span className="flex items-center gap-1"><Sprout size={10} className="text-yellow-400"/> GROWTH</span>
+                              <span className="text-yellow-400">{Math.floor(growthProgress * 100)}%</span>
+                          </div>
+                          <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                             <div 
+                                className="h-full bg-yellow-400 shadow-[0_0_8px_#facc15]" 
+                                style={{ width: `${growthProgress * 100}%`, transition: 'width 0.2s linear' }}
+                             ></div>
+                          </div>
                       </div>
+
+                      {/* 3. EVOLUTION BAR (CYAN) */}
+                      <div className="space-y-1">
+                          <div className="flex justify-between text-[10px] text-slate-500">
+                              <span className="flex items-center gap-1"><Zap size={10} className="text-neon-cyan"/> EVOLUTION</span>
+                              <span className="text-neon-cyan">{Math.floor(evolutionProgress * 100)}%</span>
+                          </div>
+                          <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                             <div 
+                                className="h-full bg-neon-cyan shadow-[0_0_8px_#00f3ff]" 
+                                style={{ width: `${evolutionProgress * 100}%`, transition: 'width 0.1s linear' }}
+                             ></div>
+                          </div>
+                      </div>
+
                   </div>
 
                    {/* MomBot Neuralink Button (LOCKED) */}
@@ -243,11 +333,11 @@ export const Controls: React.FC<ControlsProps> = ({
 
                   <div className="bg-slate-950 p-4 rounded border border-slate-800">
                     <div className="flex items-center gap-2 text-neon-green mb-2">
-                        <Play size={16} className="fill-current" />
-                        <span className="text-xs font-bold uppercase">Clicker Protocol</span>
+                        <Scan size={16} className="fill-current" />
+                        <span className="text-xs font-bold uppercase">Active Protocol</span>
                     </div>
                     <div className="text-xs text-slate-400 leading-relaxed">
-                        Click active Xenobots to scan Bio-Data. Accumulate resources to expand lab capabilities.
+                        Select tool from bottom bar. Scan for resources or intervene directly in evolution.
                     </div>
                   </div>
               </div>

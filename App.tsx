@@ -12,9 +12,9 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { HelpModal } from './components/HelpModal';
 import { DriftPanel } from './components/DriftPanel';
 import { ResearchPanel } from './components/ResearchPanel';
-import { Xenobot, Genome, AnalysisResult, CameraState, SimulationConfig, Food, GeneticStats, ResearchState, Upgrade, UpgradeID } from './types';
-import { DEFAULT_CONFIG, EVOLUTION_INTERVAL, BD_REWARD } from './constants';
-import { ScanEye, Volume2, VolumeX } from 'lucide-react';
+import { Xenobot, Genome, AnalysisResult, CameraState, SimulationConfig, Food, GeneticStats, ResearchState, Upgrade, UpgradeID, ToolMode, FloatingText, GlobalEvent } from './types';
+import { DEFAULT_CONFIG, EVOLUTION_INTERVAL, BD_REWARD, TOOL_COSTS, TOOL_COLORS, GROWTH_COST, MITOSIS_THRESHOLD, MAX_BOT_SIZE, FOOD_ENERGY } from './constants';
+import { ScanEye, Volume2, VolumeX, AlertTriangle } from 'lucide-react';
 import { PhysicsEngine } from './services/physicsEngine';
 import { createRandomGenome } from './services/geneticAlgorithm';
 import { AudioManager } from './services/audioManager';
@@ -34,8 +34,18 @@ const App: React.FC = () => {
   // Simulation State
   const [generation, setGeneration] = useState(1);
   const [isRunning, setIsRunning] = useState(false);
+  
+  // Progress States (Throttled update for UI)
   const [evolutionProgress, setEvolutionProgress] = useState(0);
+  const [growthProgress, setGrowthProgress] = useState(0);
+  const [reproductionProgress, setReproductionProgress] = useState(0);
+
   const [showEvolutionFlash, setShowEvolutionFlash] = useState(false);
+  
+  // Gamification State
+  const [activeTool, setActiveTool] = useState<ToolMode>('SCANNER');
+  const [floatingTexts, setFloatingTexts] = useState<FloatingText[]>([]);
+  const [globalEvent, setGlobalEvent] = useState<GlobalEvent | null>(null);
   
   // Genome Visibility State
   const [showGenomePanel, setShowGenomePanel] = useState(false);
@@ -48,6 +58,8 @@ const App: React.FC = () => {
   const [showResearchPanel, setShowResearchPanel] = useState(false);
   const [bioData, setBioData] = useState(0);
   const [unlockedUpgrades, setUnlockedUpgrades] = useState<UpgradeID[]>([]);
+  const [clickMultiplier, setClickMultiplier] = useState(1);
+  const [passiveMultiplier, setPassiveMultiplier] = useState(1);
   
   // Genetic History
   const [geneticHistory, setGeneticHistory] = useState<GeneticStats[]>([]);
@@ -97,6 +109,45 @@ const App: React.FC = () => {
       if (audioManagerRef.current) {
           const muted = audioManagerRef.current.toggleMute();
           setIsMuted(muted || false);
+      }
+  };
+
+  // --- Helper: Floating Text ---
+  const spawnFloatingText = (x: number, y: number, text: string, color: string) => {
+      // Find canvas screen coords for text if needed, but we do simple screen space overlay inside canvas
+      setFloatingTexts(prev => [
+          ...prev, 
+          { 
+              id: Math.random().toString(36).substr(2, 9),
+              x, y, text, color, life: 1.0, velocity: 1.0 
+          }
+      ]);
+  };
+
+  // --- Helper: Global Events ---
+  const triggerRandomEvent = () => {
+      if (globalEvent) return; // One at a time
+
+      const events: GlobalEvent[] = [
+          { 
+              id: 'EVT_BLOOM', 
+              name: 'ALGAL BLOOM', 
+              description: 'Nutrient density increased by 300%.',
+              duration: 900, 
+              isActive: true, 
+              type: 'ALGAL_BLOOM'
+          }
+      ];
+
+      const evt = events[Math.floor(Math.random() * events.length)];
+      setGlobalEvent(evt);
+      
+      // Apply Event Logic
+      if (engineRef.current) {
+          if (evt.type === 'ALGAL_BLOOM') {
+              engineRef.current.spawnFood();
+              engineRef.current.spawnFood();
+          }
       }
   };
 
@@ -291,11 +342,11 @@ const App: React.FC = () => {
                   if (e === 'COLLISION') audioManagerRef.current?.playCollisionSound();
                   if (e === 'EAT') {
                       audioManagerRef.current?.playEatSound();
-                      passiveBDGain += BD_REWARD.PASSIVE_EAT;
+                      passiveBDGain += (BD_REWARD.PASSIVE_EAT * passiveMultiplier);
                   }
                   if (e === 'MITOSIS') {
                       audioManagerRef.current?.playMitosisSound();
-                      passiveBDGain += BD_REWARD.PASSIVE_MITOSIS;
+                      passiveBDGain += (BD_REWARD.PASSIVE_MITOSIS * passiveMultiplier);
                   }
                   if (e === 'DEATH') {
                       audioManagerRef.current?.playDeathSound();
@@ -308,9 +359,26 @@ const App: React.FC = () => {
               }
           }
 
-          // Passive Survival Income (Tick based)
-          const livingCount = engine.bots.filter(b => !b.isDead).length;
-          setBioData(prev => prev + (livingCount * BD_REWARD.SURVIVAL_TICK));
+          // Passive Income: Based on TOTAL NODES in the colony
+          // Reward: NODE_SURVIVAL_TICK per node per frame
+          const totalNodes = engine.bots.reduce((sum, b) => !b.isDead ? sum + b.particles.length : sum, 0);
+          const survivalIncome = totalNodes * BD_REWARD.NODE_SURVIVAL_TICK * passiveMultiplier;
+          setBioData(prev => prev + survivalIncome);
+
+          // Global Event Management
+          if (globalEvent) {
+               setGlobalEvent(prev => {
+                   if (!prev) return null;
+                   const nextDuration = prev.duration - 1;
+                   if (nextDuration <= 0) return null; // Event Over
+                   return { ...prev, duration: nextDuration };
+               });
+          } else {
+              // Randomly trigger new event (approx once every 2 mins at 60fps)
+              if (Math.random() < 0.0002) {
+                   triggerRandomEvent();
+              }
+          }
 
           // Dynamic Ambient Audio Update
           // Pass the raw event list and bot state to the audio manager every frame
@@ -318,6 +386,16 @@ const App: React.FC = () => {
           if (audioManagerRef.current) {
               audioManagerRef.current.updateAmbience(engine.events, engine.bots);
           }
+          
+          // Floating Text Update (Physics Step)
+          setFloatingTexts(prev => prev
+              .map(ft => ({
+                  ...ft,
+                  y: ft.y - ft.velocity,
+                  life: ft.life - 0.015
+              }))
+              .filter(ft => ft.life > 0)
+          );
 
           // Sync Refs
           botsRef.current = engine.bots; 
@@ -326,10 +404,34 @@ const App: React.FC = () => {
           totalTickRef.current += 1;
           evolutionTimerRef.current += 1;
 
-          // Update Progress Bar State (Throttled)
+          // Update UI Status Bars (Throttled for performance)
           if (totalTickRef.current % 4 === 0) {
-              const progress = Math.min(1, evolutionTimerRef.current / EVOLUTION_INTERVAL);
-              setEvolutionProgress(progress);
+              const evoProg = Math.min(1, evolutionTimerRef.current / EVOLUTION_INTERVAL);
+              setEvolutionProgress(evoProg);
+
+              // Update Group Stats (Growth/Reproduction)
+              // Logic: Find the LEADER (highest energy) of Group A (Natives)
+              // Calculate their progress against the DYNAMIC SCALED COSTS in engine
+              const groupA = engine.bots.filter(b => b.groupId === 0 && !b.isDead);
+              
+              if (groupA.length > 0) {
+                  const leader = groupA.reduce((prev, curr) => (curr.energy > prev.energy ? curr : prev));
+                  const { growthCost, mitosisCost } = engine.getCosts();
+
+                  // Growth Bar (Yellow)
+                  const isMaxSize = leader.particles.length >= MAX_BOT_SIZE;
+                  const growthRatio = isMaxSize ? 1.0 : Math.min(1.0, leader.energy / growthCost);
+                  setGrowthProgress(growthRatio);
+
+                  // Reproduction Bar (White)
+                  const energyRatio = Math.min(1.0, leader.energy / mitosisCost);
+                  const ageRatio = Math.min(1.0, leader.age / 800);
+                  const reproductionRatio = Math.min(energyRatio, ageRatio);
+                  setReproductionProgress(reproductionRatio);
+              } else {
+                  setGrowthProgress(0);
+                  setReproductionProgress(0);
+              }
           }
 
           if (evolutionTimerRef.current >= EVOLUTION_INTERVAL) {
@@ -445,7 +547,7 @@ const App: React.FC = () => {
   useEffect(() => {
     requestRef.current = requestAnimationFrame(simulationLoop);
     return () => cancelAnimationFrame(requestRef.current);
-  }, [isRunning, camera, dimensions, followingBotId]);
+  }, [isRunning, camera, dimensions, followingBotId, globalEvent, clickMultiplier, passiveMultiplier]); 
 
   // Window Resize
   useEffect(() => {
@@ -512,22 +614,98 @@ const App: React.FC = () => {
      setIsAnalyzing(false);
   };
 
-  // Interaction Handler for Canvas Clicks
-  const handleInteraction = (type: 'BOT' | 'FOOD', id: string, x: number, y: number) => {
-      if (type === 'BOT') {
-          // Clicked a bot: Award RP and visual feedback
-          setBioData(prev => prev + BD_REWARD.CLICK_BOT);
-          
-          // Slight energy boost to bot to encourage survival
-          const engine = engineRef.current;
-          if (engine) {
-             const bot = engine.bots.find(b => b.id === id);
-             if (bot) bot.energy += 20; 
+  // Interaction Handler for Canvas Clicks (Gamified)
+  const handleInteraction = (type: 'BOT' | 'FOOD' | 'EMPTY', id: string, x: number, y: number) => {
+      const engine = engineRef.current;
+      if (!engine) return;
+
+      const cost = TOOL_COSTS[activeTool];
+      
+      // Cost Check (Except Reaper which gains money)
+      if (activeTool !== 'REAPER' && bioData < cost) {
+          spawnFloatingText(x, y, "NO FUNDS", "#ff0000");
+          return;
+      }
+
+      let success = false;
+      let reward = 0;
+
+      if (activeTool === 'SCANNER') {
+          if (type === 'BOT') {
+              // Clicked a bot: Award RP
+              const bot = engine.bots.find(b => b.id === id);
+              if (bot) {
+                  bot.energy += 20; 
+                  // APPLY CLICK MULTIPLIER HERE
+                  reward = BD_REWARD.CLICK_BOT * clickMultiplier;
+                  spawnFloatingText(x, y, `+${Math.floor(reward)} BD`, TOOL_COLORS.SCANNER);
+                  success = true;
+                  // Audio
+                  audioManagerRef.current?.playMitosisSound(); // Reusing pleasant chime
+              }
+          } else if (type === 'FOOD') {
+              // APPLY CLICK MULTIPLIER HERE
+              reward = BD_REWARD.CLICK_FOOD * clickMultiplier;
+              spawnFloatingText(x, y, `+${Math.floor(reward)} BD`, TOOL_COLORS.SCANNER);
+              success = true;
+              audioManagerRef.current?.playEatSound();
           }
+      } 
+      else if (activeTool === 'INJECTOR') {
+          // Spawn food at click location
+          const safeZoom = Math.max(0.1, Math.min(5.0, camera.zoom)) || 1.0;
+          const worldX = (x - dimensions.width/2) / safeZoom + camera.x;
+          const worldY = (y - dimensions.height/2) / safeZoom + camera.y;
           
-          // Sound effect would trigger here ideally
-      } else if (type === 'FOOD') {
-          setBioData(prev => prev + BD_REWARD.CLICK_FOOD);
+          // Spawn cluster with scatter
+          for(let i=0; i<3; i++) {
+              engine.food.push({
+                  id: Math.random().toString(36).substr(2, 9),
+                  x: worldX + (Math.random()-0.5)*120, // Increased scatter
+                  y: worldY + (Math.random()-0.5)*120,
+                  energy: FOOD_ENERGY, // Uses constant to align with economy
+                  phase: Math.random() * Math.PI * 2
+              });
+          }
+          spawnFloatingText(x, y, `-${cost} BD`, TOOL_COLORS.INJECTOR);
+          success = true;
+          // Reuse eat sound for squishy injection feel
+          audioManagerRef.current?.playEatSound();
+      }
+      else if (activeTool === 'MUTAGEN') {
+          if (type === 'BOT') {
+             const result = engine.applyMutagen(id);
+             if (result) {
+                 spawnFloatingText(x, y, "MUTATED", TOOL_COLORS.MUTAGEN);
+                 spawnFloatingText(x, y - 20, `-${cost} BD`, "#fff");
+                 success = true;
+                 audioManagerRef.current?.playEvolutionSound(); // Big sound for big action
+             }
+          }
+      }
+      else if (activeTool === 'REAPER') {
+          if (type === 'BOT') {
+              const botIndex = engine.bots.findIndex(b => b.id === id);
+              if (botIndex !== -1) {
+                  const bot = engine.bots[botIndex];
+                  const reclaimValue = Math.floor(bot.energy * 0.15); // Increased to 15%
+                  reward = reclaimValue;
+                  
+                  // Kill bot
+                  bot.isDead = true;
+                  engine.events.push('DEATH');
+                  
+                  spawnFloatingText(x, y, `+${reward} BD`, TOOL_COLORS.REAPER);
+                  spawnFloatingText(x, y - 20, "RECLAIMED", "#fff");
+                  success = true; // No cost, but success flag for state update
+                  audioManagerRef.current?.playDeathSound();
+              }
+          }
+      }
+
+      if (success) {
+          if (activeTool !== 'REAPER') setBioData(prev => prev - cost + reward);
+          else setBioData(prev => prev + reward);
       }
   };
 
@@ -535,8 +713,18 @@ const App: React.FC = () => {
       if (bioData >= upgrade.cost && !unlockedUpgrades.includes(upgrade.id)) {
           setBioData(prev => prev - upgrade.cost);
           setUnlockedUpgrades(prev => [...prev, upgrade.id]);
+          
+          // Apply META upgrades (Multipliers) logic
+          if (upgrade.id.startsWith('SCAN_AMP')) {
+              // Any scan amp upgrade DOUBLES the current multiplier
+              setClickMultiplier(prev => prev * 2);
+          } else if (upgrade.id === 'CHEMOSTAT_VAT') {
+              setPassiveMultiplier(prev => prev + 1); // +100%
+          } else if (upgrade.id === 'MITOCHONDRIAL_TUNING') {
+              setPassiveMultiplier(prev => prev + 2); // +200%
+          }
 
-          // Apply Effects
+          // Apply Config Effects
           if (upgrade.effect) {
               const newConfig = { ...config, ...upgrade.effect(config) };
               setConfig(newConfig);
@@ -577,6 +765,17 @@ const App: React.FC = () => {
              className={`absolute inset-0 z-[100] bg-neon-cyan/20 pointer-events-none transition-opacity duration-1000 ease-out mix-blend-screen ${showEvolutionFlash ? 'opacity-40' : 'opacity-0'}`}
           />
 
+          {/* Global Event Warning Banner */}
+          {globalEvent && (
+              <div className="absolute top-8 left-1/2 -translate-x-1/2 z-50 bg-red-500/20 border border-red-500 text-red-500 px-6 py-2 rounded-full flex items-center gap-3 animate-pulse shadow-[0_0_20px_rgba(239,68,68,0.5)]">
+                  <AlertTriangle size={20} />
+                  <div className="flex flex-col items-center">
+                      <span className="font-bold font-display tracking-widest">{globalEvent.name} ACTIVE</span>
+                      <span className="text-[10px] font-mono text-red-300">{globalEvent.description}</span>
+                  </div>
+              </div>
+          )}
+
           <SimulationCanvas 
             botsRef={botsRef}
             foodRef={foodRef}
@@ -587,6 +786,8 @@ const App: React.FC = () => {
             followingBotId={followingBotId}
             isRunning={isRunning}
             onInteract={handleInteraction}
+            floatingTexts={floatingTexts}
+            activeTool={activeTool}
           />
           
           <div className="absolute top-0 left-0 bottom-0 z-30">
@@ -595,6 +796,8 @@ const App: React.FC = () => {
                 generation={generation}
                 timeRemaining={0}
                 evolutionProgress={evolutionProgress}
+                growthProgress={growthProgress}
+                reproductionProgress={reproductionProgress}
                 onTogglePlay={() => setIsRunning(!isRunning)}
                 onAnalyze={handleAnalyze}
                 onOpenSettings={() => { setShowSettings(true); setIsRunning(false); }}
@@ -611,6 +814,9 @@ const App: React.FC = () => {
                 bioData={bioData}
                 unlockedUpgrades={unlockedUpgrades}
                 onOpenResearch={() => setShowResearchPanel(true)}
+                // Tools
+                activeTool={activeTool}
+                onSelectTool={setActiveTool}
              />
           </div>
           
@@ -643,6 +849,9 @@ const App: React.FC = () => {
                     if (data.researchState) {
                         setBioData(data.researchState.bioData);
                         setUnlockedUpgrades(data.researchState.unlockedUpgrades);
+                        // Restore Multipliers
+                        setClickMultiplier(data.researchState.clickMultiplier);
+                        setPassiveMultiplier(data.researchState.passiveMultiplier);
                     }
                 }}
                 onClose={() => {
@@ -655,8 +864,8 @@ const App: React.FC = () => {
                 researchState={{
                     bioData,
                     unlockedUpgrades,
-                    clickMultiplier: 1,
-                    passiveMultiplier: 1
+                    clickMultiplier,
+                    passiveMultiplier
                 }}
              />
           )}

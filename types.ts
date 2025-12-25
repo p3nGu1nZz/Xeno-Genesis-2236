@@ -140,11 +140,17 @@ export interface TickPayload {
 
 export type UpgradeID = 
   | 'NUTRIENT_AGAR' 
+  | 'SCAN_AMP_1' 
+  | 'CHEMOSTAT_VAT'
   | 'FLUIDIC_SMOOTHING' 
   | 'GENOME_SEQUENCER' 
+  | 'SCAN_AMP_2'
+  | 'SCAN_AMP_3'
+  | 'MITOCHONDRIAL_TUNING'
   | 'MOMBOT_LINK' 
   | 'POPULATION_EXPANSION_1'
   | 'POPULATION_EXPANSION_2'
+  | 'CILIA_OVERCLOCK'
   | 'DRIFT_ANALYSIS'
   | 'AUTOCLAVE_PROTOCOL';
 
@@ -162,4 +168,27 @@ export interface ResearchState {
   unlockedUpgrades: UpgradeID[];
   clickMultiplier: number;
   passiveMultiplier: number;
+}
+
+// --- Gamification Types ---
+
+export type ToolMode = 'SCANNER' | 'INJECTOR' | 'MUTAGEN' | 'REAPER';
+
+export interface FloatingText {
+  id: string;
+  x: number;
+  y: number;
+  text: string;
+  color: string;
+  life: number; // 0 to 1
+  velocity: number;
+}
+
+export interface GlobalEvent {
+  id: string;
+  name: string;
+  description: string;
+  duration: number; // ticks
+  isActive: boolean;
+  type: 'RADIATION' | 'ALGAL_BLOOM' | 'STAGNATION';
 }

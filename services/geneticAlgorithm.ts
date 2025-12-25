@@ -433,14 +433,24 @@ export function evolvePopulation(population: Genome[], generation: number, maxPo
   const evolveSubPool = (pool: Genome[], currentMax: number): Genome[] => {
       if (pool.length === 0) return [];
       const sorted = [...pool].sort((a, b) => b.fitness - a.fitness);
-      const growthTarget = Math.max(1, Math.floor(pool.length * 0.10));
-      const limit = Math.min(currentMax, pool.length + growthTarget);
       
-      const nextGen = [...sorted];
+      // Determine how many offspring to generate (10% growth per generation)
+      const growthTarget = Math.max(1, Math.floor(pool.length * 0.10));
+      
+      // Keep survivors (parents) but truncate if we exceed cap
+      // This ensures populations don't explode infinitely
+      let survivors = [...sorted];
+      if (survivors.length > currentMax) {
+          survivors = survivors.slice(0, currentMax);
+      }
+      
+      const nextGen = [...survivors];
+      const limit = Math.min(currentMax, survivors.length + growthTarget);
+      
       let attempts = 0;
       while (nextGen.length < limit && attempts < 100) {
-          const p1 = tournamentSelect(sorted);
-          const p2 = tournamentSelect(sorted);
+          const p1 = tournamentSelect(survivors);
+          const p2 = tournamentSelect(survivors);
           let child = crossover(p1, p2, generation + 1);
           child = mutate(child);
           nextGen.push(child);
@@ -451,6 +461,19 @@ export function evolvePopulation(population: Genome[], generation: number, maxPo
 
   const nextA = evolveSubPool(poolA, maxPerGroup);
   const nextB = evolveSubPool(poolB, maxPerGroup);
+
+  // CRITICAL FIX: Prevent Extinction via Genetic Drift
+  // If Group A (Native Strain) has died out or drifted into Group B colors,
+  // we must re-seed it to maintain the ecological balance of the simulation.
+  if (nextA.length === 0 && maxPerGroup > 0) {
+      // Create a new "Native" progenitor (Cyan hue ~190)
+      nextA.push(createRandomGenome(generation, 190));
+  }
+
+  // Same for Group B to maintain competition
+  if (nextB.length === 0 && maxPerGroup > 0) {
+      nextB.push(createRandomGenome(generation, 340));
+  }
 
   return [...nextA, ...nextB];
 }

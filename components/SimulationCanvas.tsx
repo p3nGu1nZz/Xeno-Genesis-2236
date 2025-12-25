@@ -1,7 +1,7 @@
 
 import React, { useRef, useEffect, useLayoutEffect } from 'react';
-import { Xenobot, CameraState, Food } from '../types';
-import { COLORS, FOOD_RADIUS } from '../constants';
+import { Xenobot, CameraState, Food, FloatingText, ToolMode } from '../types';
+import { COLORS, FOOD_RADIUS, TOOL_COLORS } from '../constants';
 
 const MAX_PARTICLES = 256; 
 
@@ -57,8 +57,8 @@ const FS_SOURCE = `
     // Scale field physics with zoom
     float zoomScale = max(0.1, u_zoom);
     
-    // REDUCED: Smaller radius to fit Xenobot size accurately
-    float radiusBase = 4.0 * pow(zoomScale, 0.8); 
+    // INCREASED: Larger radius for more prominent field
+    float radiusBase = 12.0 * pow(zoomScale, 0.8); 
     float radiusSq = radiusBase * radiusBase;
     
     float field = 0.0;
@@ -77,8 +77,8 @@ const FS_SOURCE = `
         // Inverse square law for electric field
         float epsilon = 0.5 * zoomScale;
         
-        // REDUCED: Visual contribution significantly lower for tight field
-        float contrib = (p.z * radiusSq * 0.02) / (distSq + epsilon); 
+        // INCREASED contribution for stronger visual
+        float contrib = (p.z * radiusSq * 0.05) / (distSq + epsilon); 
         
         field += contrib;
         weightedIrruption += p.w * contrib;
@@ -142,7 +142,9 @@ interface SimulationCanvasProps {
   camera: CameraState;
   followingBotId: string | null;
   isRunning: boolean;
-  onInteract: (type: 'BOT' | 'FOOD', id: string, x: number, y: number) => void;
+  onInteract: (type: 'BOT' | 'FOOD' | 'EMPTY', id: string, x: number, y: number) => void;
+  floatingTexts: FloatingText[];
+  activeTool: ToolMode;
 }
 
 export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ 
@@ -154,7 +156,9 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
   camera, 
   followingBotId, 
   isRunning,
-  onInteract
+  onInteract,
+  floatingTexts,
+  activeTool
 }) => {
   const canvas2dRef = useRef<HTMLCanvasElement>(null);
   const canvasGlRef = useRef<HTMLCanvasElement>(null);
@@ -242,6 +246,7 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
     // Check Bot Collision (Approximate using Center of Mass)
     const BOT_HIT_RADIUS_SQ = 60 * 60; // 60px radius
     for(const b of bots) {
+        if (b.isDead) continue;
         const dx = b.centerOfMass.x - worldX;
         const dy = b.centerOfMass.y - worldY;
         if (dx*dx + dy*dy < BOT_HIT_RADIUS_SQ) {
@@ -260,6 +265,9 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
             return;
         }
     }
+
+    // No hit? Send EMPTY interaction for tools like Injector
+    onInteract('EMPTY', '', clickX, clickY);
   };
 
   // --- Main Render Loop (Decoupled from React State) ---
@@ -280,6 +288,24 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
       
       const safeZoom = Math.max(0.1, Math.min(5.0, camera.zoom)) || 1.0;
       
+      // Render Floating Text (Screen Space)
+      // Done BEFORE transform to ensure they stay on screen
+      if (floatingTexts.length > 0) {
+          ctx.save();
+          ctx.font = "bold 14px monospace";
+          ctx.textAlign = "center";
+          for (const ft of floatingTexts) {
+              ctx.globalAlpha = Math.max(0, ft.life);
+              ctx.fillStyle = ft.color;
+              ctx.fillText(ft.text, ft.x, ft.y);
+              
+              // Shadow
+              ctx.fillStyle = 'rgba(0,0,0,0.8)';
+              ctx.fillText(ft.text, ft.x + 1, ft.y + 1);
+          }
+          ctx.restore();
+      }
+
       ctx.translate(width/2, height/2); 
       ctx.scale(safeZoom, safeZoom);
       ctx.translate(-camera.x, -camera.y);
@@ -573,19 +599,26 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
         if (bot.id === followingBotId || bot.id === hoveredBotId) {
             ctx.save();
             ctx.translate(bot.centerOfMass.x, bot.centerOfMass.y - 60);
-            ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-            ctx.beginPath();
-            ctx.roundRect(-40, -15, 80, 26, 4);
-            ctx.fill();
             
-            ctx.font = "12px monospace";
+            // UPDATED: Much larger tooltip
+            ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
+            ctx.lineWidth = 1;
+            
+            ctx.beginPath();
+            // Increased size from 80x26 to 120x50
+            ctx.roundRect(-60, -50, 120, 50, 8); 
+            ctx.fill();
+            ctx.stroke();
+            
+            ctx.font = "bold 16px monospace"; // Larger Font
             ctx.fillStyle = "#fff";
             ctx.textAlign = "center";
-            ctx.fillText(`AGE: ${bot.age}`, 0, 0);
+            ctx.fillText(`AGE: ${bot.age}`, 0, -25);
             
-            ctx.font = "10px monospace";
+            ctx.font = "bold 14px monospace"; // Larger Font
             ctx.fillStyle = bot.energy < 500 ? "#ef4444" : "#39ff14";
-            ctx.fillText(`${Math.floor(bot.energy)}J`, 0, 12); // Reduced from "NRG"
+            ctx.fillText(`${Math.floor(bot.energy)}J`, 0, -8); 
             
             ctx.restore();
         }
@@ -690,7 +723,17 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
   useLayoutEffect(() => {
     requestRef.current = requestAnimationFrame(render);
     return () => cancelAnimationFrame(requestRef.current);
-  }, [width, height, groundY, camera, followingBotId, isRunning]); 
+  }, [width, height, groundY, camera, followingBotId, isRunning, floatingTexts, activeTool]); 
+
+  // --- Dynamic Cursor Styles based on Tool ---
+  const cursorStyle = (() => {
+      switch(activeTool) {
+          case 'INJECTOR': return 'crosshair';
+          case 'MUTAGEN': return 'help';
+          case 'REAPER': return 'not-allowed'; // Or a custom crosshair
+          default: return 'crosshair';
+      }
+  })();
 
   return (
     <div className="absolute inset-0 z-0 overflow-hidden" 
@@ -699,7 +742,7 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
              height, 
              backgroundColor: '#020617', // Fallback color
              backgroundImage: 'radial-gradient(circle at center, #0f172a 0%, #020617 100%)',
-             cursor: 'crosshair'
+             cursor: cursorStyle
          }}
          onClick={handleClick}
          onMouseMove={handleMouseMove}

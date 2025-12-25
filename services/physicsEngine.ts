@@ -220,6 +220,7 @@ export class PhysicsEngine {
 
         const energyGained = this.checkFoodConsumption(bot);
         
+        // Reverted irruption sensitivity
         bot.irruption = Math.min(1.0, bot.totalCharge * 0.1);
         bot.absorption = Math.min(1.0, (energyGained > 0 ? 0.5 : 0));
 
@@ -236,8 +237,6 @@ export class PhysicsEngine {
         this.bots.push(...newBots);
     }
 
-    // Apply visual smoothing (Damped Spring System)
-    // Must be called here to update render positions for the canvas
     this.smoothRenderPositions();
 
     if (this.food.length < this.config.foodCount * 0.8) {
@@ -304,7 +303,7 @@ export class PhysicsEngine {
       const mStrength = this.config.muscleStrength;
       const mSpeed = this.config.muscleSpeed;
       
-      // REDUCED: Max charge limit to prevent massive shader blooms
+      // Reverted: Charge limit
       const chargeLimit = 500.0; 
       
       const decayFactor = METABOLIC_DECAY * 0.05; 
@@ -332,10 +331,10 @@ export class PhysicsEngine {
           const distSq = dx*dx + dy*dy;
           const currLen = Math.sqrt(distSq);
           
-          // Charge Gen - Tuned for tighter fields
+          // Charge Gen - Reverted
           const strain = Math.abs(currLen - s.currentRestLength) / s.currentRestLength;
           if (strain > 0.05) { 
-             const chargeGen = strain * 100.0; // Moderate generation
+             const chargeGen = strain * 100.0; 
              p1.charge = Math.min(chargeLimit, p1.charge + chargeGen);
              p2.charge = Math.min(chargeLimit, p2.charge + chargeGen);
           }
@@ -468,7 +467,7 @@ export class PhysicsEngine {
         p.force.x = 0;
         p.force.y = 0;
         
-        // DECAY ADJUSTMENT: Fast decay for tight field
+        // Reverted: Decay to 0.95
         p.charge *= 0.95; 
 
         centerX += p.pos.x;
@@ -648,11 +647,7 @@ export class PhysicsEngine {
   }
 
   public smoothRenderPositions() {
-      // Replaced simple Spring with Critical Damping (SmoothDamp variant)
-      // for better jitter reduction without oscillation.
-      const dt = 1.0 / 60.0;
-      const smoothTime = 0.08; // ~80ms lag, good balance of smooth vs responsive
-      
+      // Reverted to LERP for stability
       this.bots.forEach(b => {
           b.particles.forEach(p => {
               if (!p.renderVel) p.renderVel = { x: 0, y: 0 };
@@ -660,39 +655,19 @@ export class PhysicsEngine {
               const targetX = p.pos.x;
               const targetY = p.pos.y;
               
-              const dx = p.renderPos.x - targetX;
-              const dy = p.renderPos.y - targetY;
+              const dx = targetX - p.renderPos.x;
+              const dy = targetY - p.renderPos.y;
               const distSq = dx*dx + dy*dy;
 
-              // Teleport if too far (e.g. initialization or world wrap)
-              if (distSq > 4900) { // 70px radius
+              if (distSq > 4900) { 
                   p.renderPos.x = targetX;
                   p.renderPos.y = targetY;
-                  p.renderVel.x = 0;
-                  p.renderVel.y = 0;
-                  return;
+              } else {
+                  // Simple LERP
+                  const t = 0.25;
+                  p.renderPos.x += dx * t;
+                  p.renderPos.y += dy * t;
               }
-
-              // SmoothDamp Algorithm
-              // Based on Game Programming Gems 4 Chapter 1.10
-              const omega = 2.0 / smoothTime;
-              const x = omega * dt;
-              const exp = 1.0 / (1.0 + x + 0.48 * x * x + 0.235 * x * x * x);
-              
-              const changeX = dx;
-              const changeY = dy;
-              
-              const tempX = (p.renderVel.x + omega * changeX) * dt;
-              const tempY = (p.renderVel.y + omega * changeY) * dt;
-              
-              p.renderVel.x = (p.renderVel.x - omega * tempX) * exp;
-              p.renderVel.y = (p.renderVel.y - omega * tempY) * exp;
-              
-              let outputX = targetX + (changeX + tempX) * exp;
-              let outputY = targetY + (changeY + tempY) * exp;
-
-              p.renderPos.x = outputX;
-              p.renderPos.y = outputY;
           });
       });
   }

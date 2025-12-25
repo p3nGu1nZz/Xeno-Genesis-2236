@@ -648,29 +648,23 @@ export class PhysicsEngine {
   }
 
   public smoothRenderPositions() {
-      // Damped Spring System (Low-Pass Filter)
-      // Visual timestep ~ 60fps
-      const dt = 1.0 / 60.0; 
+      // Replaced simple Spring with Critical Damping (SmoothDamp variant)
+      // for better jitter reduction without oscillation.
+      const dt = 1.0 / 60.0;
+      const smoothTime = 0.08; // ~80ms lag, good balance of smooth vs responsive
       
-      // Tuned for high responsiveness and zero jitter
-      // Tension 900 -> wn = 30 rad/s (~4.7 Hz) - Fast Response
-      // Damping 60 -> Critical (2*sqrt(900) = 60) - No overshoot
-      const tension = 900.0; 
-      const damping = 60.0;
-
       this.bots.forEach(b => {
           b.particles.forEach(p => {
-              // Ensure velocity state exists
               if (!p.renderVel) p.renderVel = { x: 0, y: 0 };
 
               const targetX = p.pos.x;
               const targetY = p.pos.y;
               
-              const dx = targetX - p.renderPos.x;
-              const dy = targetY - p.renderPos.y;
+              const dx = p.renderPos.x - targetX;
+              const dy = p.renderPos.y - targetY;
               const distSq = dx*dx + dy*dy;
-              
-              // Teleport / Reset if divergence is too high (e.g. initialization or large position reset)
+
+              // Teleport if too far (e.g. initialization or world wrap)
               if (distSq > 4900) { // 70px radius
                   p.renderPos.x = targetX;
                   p.renderPos.y = targetY;
@@ -679,16 +673,26 @@ export class PhysicsEngine {
                   return;
               }
 
-              // Spring Force: F = k*x - c*v
-              const ax = tension * dx - damping * p.renderVel.x;
-              const ay = tension * dy - damping * p.renderVel.y;
+              // SmoothDamp Algorithm
+              // Based on Game Programming Gems 4 Chapter 1.10
+              const omega = 2.0 / smoothTime;
+              const x = omega * dt;
+              const exp = 1.0 / (1.0 + x + 0.48 * x * x + 0.235 * x * x * x);
+              
+              const changeX = dx;
+              const changeY = dy;
+              
+              const tempX = (p.renderVel.x + omega * changeX) * dt;
+              const tempY = (p.renderVel.y + omega * changeY) * dt;
+              
+              p.renderVel.x = (p.renderVel.x - omega * tempX) * exp;
+              p.renderVel.y = (p.renderVel.y - omega * tempY) * exp;
+              
+              let outputX = targetX + (changeX + tempX) * exp;
+              let outputY = targetY + (changeY + tempY) * exp;
 
-              // Semi-Implicit Euler Integration
-              p.renderVel.x += ax * dt;
-              p.renderVel.y += ay * dt;
-
-              p.renderPos.x += p.renderVel.x * dt;
-              p.renderPos.y += p.renderVel.y * dt;
+              p.renderPos.x = outputX;
+              p.renderPos.y = outputY;
           });
       });
   }

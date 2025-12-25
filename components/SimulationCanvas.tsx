@@ -663,14 +663,6 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
          onMouseMove={handleMouseMove}
          onMouseLeave={handleMouseLeave}
     >
-       {/* Static Grid Pattern Overlay for Texture */}
-       <div className="absolute inset-0 z-0 pointer-events-none opacity-[0.07]" 
-            style={{ 
-                backgroundImage: 'linear-gradient(#00f3ff 1px, transparent 1px), linear-gradient(90deg, #00f3ff 1px, transparent 1px)', 
-                backgroundSize: '40px 40px' 
-            }} 
-       />
-
        {/* Vignette Overlay to darken edges */}
        <div className="absolute inset-0 z-0 pointer-events-none"
             style={{

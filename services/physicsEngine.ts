@@ -303,7 +303,9 @@ export class PhysicsEngine {
       const particles = bot.particles;
       const mStrength = this.config.muscleStrength;
       const mSpeed = this.config.muscleSpeed;
-      const chargeLimit = 500.0; // Increased limit for more intense field visuals
+      
+      // REDUCED: Max charge limit to prevent massive shader blooms
+      const chargeLimit = 500.0; 
       
       const decayFactor = METABOLIC_DECAY * 0.05; 
       const dampingCoefficient = 1.1; 
@@ -330,10 +332,10 @@ export class PhysicsEngine {
           const distSq = dx*dx + dy*dy;
           const currLen = Math.sqrt(distSq);
           
-          // Charge Gen - SIGNIFICANTLY INCREASED SENSITIVITY
+          // Charge Gen - Tuned for tighter fields
           const strain = Math.abs(currLen - s.currentRestLength) / s.currentRestLength;
-          if (strain > 0.05) {
-             const chargeGen = strain * 50.0; // Increased from 10.0 to 50.0 for higher impact
+          if (strain > 0.05) { 
+             const chargeGen = strain * 100.0; // Moderate generation
              p1.charge = Math.min(chargeLimit, p1.charge + chargeGen);
              p2.charge = Math.min(chargeLimit, p2.charge + chargeGen);
           }
@@ -466,9 +468,8 @@ export class PhysicsEngine {
         p.force.x = 0;
         p.force.y = 0;
         
-        // DECAY ADJUSTMENT: Slowed decay rate for longer lasting field
-        // Was 0.999995 -> Now 0.999999 (almost negligible per step)
-        p.charge *= 0.999999; 
+        // DECAY ADJUSTMENT: Fast decay for tight field
+        p.charge *= 0.95; 
 
         centerX += p.pos.x;
         centerY += p.pos.y;

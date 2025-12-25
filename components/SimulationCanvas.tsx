@@ -56,7 +56,7 @@ const FS_SOURCE = `
     // Scale field physics with zoom
     float zoomScale = max(0.1, u_zoom);
     
-    // Reduced base radius to prevent screen takeover (was 12.0)
+    // REDUCED: Smaller radius to fit Xenobot size accurately
     float radiusBase = 4.0 * pow(zoomScale, 0.8); 
     float radiusSq = radiusBase * radiusBase;
     
@@ -76,9 +76,8 @@ const FS_SOURCE = `
         // Inverse square law for electric field
         float epsilon = 0.5 * zoomScale;
         
-        // Reduced contribution multiplier significantly (p.z can be 500.0)
-        // Was 2.5, now 0.05 to compensate for high charge values
-        float contrib = (p.z * radiusSq * 0.05) / (distSq + epsilon); 
+        // REDUCED: Visual contribution significantly lower for tight field
+        float contrib = (p.z * radiusSq * 0.02) / (distSq + epsilon); 
         
         field += contrib;
         weightedIrruption += p.w * contrib;
@@ -94,7 +93,7 @@ const FS_SOURCE = `
     // Dynamic Distortion (Heat Haze + Electric flux)
     float distortNoise = noise(worldUV * 0.008 + vec2(u_time * 0.05)); 
     
-    // Reduced distortion scale from 250.0 to 30.0 for cleaner visuals
+    // REDUCED: Distortion scale lowered for subtler effect
     vec2 distortedUV = worldUV + vec2(distortNoise) * field * 30.0; 
 
     // Electric arcs / filaments on distorted UVs - Slower animation
@@ -105,8 +104,8 @@ const FS_SOURCE = `
     
     vec4 color = vec4(0.0);
     
-    // Increased cutoff from 0.05 to 0.15 to remove infinite faint glow
-    if (flow > 0.15) {
+    // Lowered cutoff to allow fainter fields to be visible
+    if (flow > 0.1) {
        vec3 cCalm = vec3(0.0, 0.5, 1.0); // Cyan/Blue
        vec3 cActive = vec3(1.0, 0.0, 0.8); // Magenta
        
@@ -115,7 +114,7 @@ const FS_SOURCE = `
        vec3 cElec = vec3(0.8, 0.9, 1.0);
 
        // Sharper falloff
-       float alpha = smoothstep(0.15, 0.4, flow);
+       float alpha = smoothstep(0.1, 0.4, flow);
        alpha = clamp(alpha, 0.0, 0.90); 
 
        vec3 rgb = baseColor * flow * 1.5; 

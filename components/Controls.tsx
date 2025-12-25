@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Play, Pause, Zap, Activity, Settings, PanelLeftClose, PanelLeftOpen, Dna, Network, TrendingUp } from 'lucide-react';
 
@@ -49,12 +48,12 @@ export const Controls: React.FC<ControlsProps> = ({
               <div className="flex flex-col items-center min-w-[140px]">
                   <div className="flex justify-between w-full text-[10px] text-slate-500 mb-1">
                      <span className="flex items-center gap-1"><Zap size={10} className="text-yellow-500" /> MUTATION</span>
-                     <span className="text-neon-cyan">{Math.floor((1 - evolutionProgress) * 100)}%</span>
+                     <span className="text-neon-cyan">{Math.floor(evolutionProgress * 100)}%</span>
                   </div>
                   <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
                        <div 
                            className="h-full bg-neon-cyan shadow-[0_0_8px_#00f3ff]" 
-                           style={{ width: `${(1 - evolutionProgress) * 100}%`, transition: 'width 0.1s linear' }}
+                           style={{ width: `${evolutionProgress * 100}%`, transition: 'width 0.1s linear' }}
                        ></div>
                   </div>
               </div>
@@ -159,7 +158,7 @@ export const Controls: React.FC<ControlsProps> = ({
                       <div className="absolute top-0 left-0 w-full h-1 bg-slate-800">
                           <div 
                              className="h-full bg-neon-cyan shadow-[0_0_10px_#00f3ff]" 
-                             style={{ width: `${(1 - evolutionProgress) * 100}%`, transition: 'width 0.1s linear' }}
+                             style={{ width: `${evolutionProgress * 100}%`, transition: 'width 0.1s linear' }}
                           ></div>
                       </div>
 
@@ -170,7 +169,7 @@ export const Controls: React.FC<ControlsProps> = ({
                       <div className="text-4xl text-white font-display">{generation.toString().padStart(4, '0')}</div>
                       <div className="flex justify-between items-end mt-2">
                            <span className="text-[10px] text-slate-500">NEXT MUTATION</span>
-                           <span className="text-xs text-neon-cyan font-bold">{Math.floor((1 - evolutionProgress) * 100)}%</span>
+                           <span className="text-xs text-neon-cyan font-bold">{Math.floor(evolutionProgress * 100)}%</span>
                       </div>
                   </div>
 

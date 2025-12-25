@@ -328,8 +328,8 @@ function crossover(parentA: Genome, parentB: Genome, generation: number): Genome
   // Enforce Contiguity
   let processed = enforceContiguity(child);
   
-  // Prune (which also enforces contiguity) to prevent instant large children
-  return pruneGenome(processed, 0.25);
+  // Revised: Higher retention (0.9) to prevent instant degeneration of morphology
+  return pruneGenome(processed, 0.9);
 }
 
 export function mutate(genome: Genome): Genome {

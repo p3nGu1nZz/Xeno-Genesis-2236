@@ -289,9 +289,17 @@ export class PhysicsEngine {
       bot.energy /= 2;
       this.events.push('MITOSIS');
       let childGenome = mutate(bot.genome);
-      childGenome = pruneGenome(childGenome, 0.15);
-      const offset = 60;
-      const child = this.createBot(childGenome, bot.centerOfMass.x + offset, bot.centerOfMass.y + offset);
+      // REVISED: Higher retention (0.9) to preserve morphology of successful parents.
+      // Small seeds struggle to move in this physics environment.
+      childGenome = pruneGenome(childGenome, 0.9);
+      
+      // Randomize offset to prevent stacking
+      const angle = Math.random() * Math.PI * 2;
+      const distance = 80 + Math.random() * 40;
+      const ox = Math.cos(angle) * distance;
+      const oy = Math.sin(angle) * distance;
+      
+      const child = this.createBot(childGenome, bot.centerOfMass.x + ox, bot.centerOfMass.y + oy);
       child.groupId = bot.groupId;
       child.energy = bot.energy; 
       return child;

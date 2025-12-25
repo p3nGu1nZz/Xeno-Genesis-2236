@@ -105,6 +105,7 @@ export interface SaveData {
   population: Genome[];
   generation: number;
   timestamp: number;
+  researchState: ResearchState;
 }
 
 export interface GeneticStats {
@@ -131,4 +132,32 @@ export interface TickPayload {
   timeLeft: number;
   generation: number;
   bestGenome: Genome | null;
+}
+
+// --- Research / Game Types ---
+
+export type UpgradeID = 
+  | 'NUTRIENT_AGAR' 
+  | 'FLUIDIC_SMOOTHING' 
+  | 'GENOME_SEQUENCER' 
+  | 'MOMBOT_LINK' 
+  | 'POPULATION_EXPANSION_1'
+  | 'POPULATION_EXPANSION_2'
+  | 'DRIFT_ANALYSIS'
+  | 'AUTOCLAVE_PROTOCOL';
+
+export interface Upgrade {
+  id: UpgradeID;
+  name: string;
+  description: string;
+  cost: number;
+  icon: string; // Lucide icon name mapping
+  effect?: (config: SimulationConfig) => Partial<SimulationConfig>;
+}
+
+export interface ResearchState {
+  bioData: number;
+  unlockedUpgrades: UpgradeID[];
+  clickMultiplier: number;
+  passiveMultiplier: number;
 }

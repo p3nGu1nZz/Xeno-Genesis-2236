@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { analyzeXenobot } from './services/geminiService';
 import { SimulationCanvas } from './components/SimulationCanvas';
@@ -10,8 +11,9 @@ import { SplashScreen } from './components/SplashScreen';
 import { SettingsPanel } from './components/SettingsPanel';
 import { HelpModal } from './components/HelpModal';
 import { DriftPanel } from './components/DriftPanel';
-import { Xenobot, Genome, AnalysisResult, CameraState, SimulationConfig, Food, GeneticStats } from './types';
-import { DEFAULT_CONFIG, EVOLUTION_INTERVAL } from './constants';
+import { ResearchPanel } from './components/ResearchPanel';
+import { Xenobot, Genome, AnalysisResult, CameraState, SimulationConfig, Food, GeneticStats, ResearchState, Upgrade, UpgradeID } from './types';
+import { DEFAULT_CONFIG, EVOLUTION_INTERVAL, BD_REWARD } from './constants';
 import { ScanEye, Volume2, VolumeX } from 'lucide-react';
 import { PhysicsEngine } from './services/physicsEngine';
 import { createRandomGenome } from './services/geneticAlgorithm';
@@ -41,6 +43,11 @@ const App: React.FC = () => {
   
   // MomBot Interface State
   const [showMomBotPanel, setShowMomBotPanel] = useState(false);
+
+  // Research / Game State
+  const [showResearchPanel, setShowResearchPanel] = useState(false);
+  const [bioData, setBioData] = useState(0);
+  const [unlockedUpgrades, setUnlockedUpgrades] = useState<UpgradeID[]>([]);
   
   // Genetic History
   const [geneticHistory, setGeneticHistory] = useState<GeneticStats[]>([]);
@@ -275,15 +282,35 @@ const App: React.FC = () => {
       if (isRunning) {
           engine.update(time / 1000); // Physics Update
           
-          // Process Physics Events for Audio
+          // Process Physics Events for Audio AND Gameplay Awards
           if (engine.events.length > 0) {
+              let passiveBDGain = 0;
+              let hasDeath = false;
+
               engine.events.forEach(e => {
                   if (e === 'COLLISION') audioManagerRef.current?.playCollisionSound();
-                  if (e === 'EAT') audioManagerRef.current?.playEatSound();
-                  if (e === 'MITOSIS') audioManagerRef.current?.playMitosisSound();
-                  if (e === 'DEATH') audioManagerRef.current?.playDeathSound();
+                  if (e === 'EAT') {
+                      audioManagerRef.current?.playEatSound();
+                      passiveBDGain += BD_REWARD.PASSIVE_EAT;
+                  }
+                  if (e === 'MITOSIS') {
+                      audioManagerRef.current?.playMitosisSound();
+                      passiveBDGain += BD_REWARD.PASSIVE_MITOSIS;
+                  }
+                  if (e === 'DEATH') {
+                      audioManagerRef.current?.playDeathSound();
+                      hasDeath = true;
+                  }
               });
+              
+              if (passiveBDGain > 0) {
+                  setBioData(prev => prev + passiveBDGain);
+              }
           }
+
+          // Passive Survival Income (Tick based)
+          const livingCount = engine.bots.filter(b => !b.isDead).length;
+          setBioData(prev => prev + (livingCount * BD_REWARD.SURVIVAL_TICK));
 
           // Dynamic Ambient Audio Update
           // Pass the raw event list and bot state to the audio manager every frame
@@ -485,6 +512,47 @@ const App: React.FC = () => {
      setIsAnalyzing(false);
   };
 
+  // Interaction Handler for Canvas Clicks
+  const handleInteraction = (type: 'BOT' | 'FOOD', id: string, x: number, y: number) => {
+      if (type === 'BOT') {
+          // Clicked a bot: Award RP and visual feedback
+          setBioData(prev => prev + BD_REWARD.CLICK_BOT);
+          
+          // Slight energy boost to bot to encourage survival
+          const engine = engineRef.current;
+          if (engine) {
+             const bot = engine.bots.find(b => b.id === id);
+             if (bot) bot.energy += 20; 
+          }
+          
+          // Sound effect would trigger here ideally
+      } else if (type === 'FOOD') {
+          setBioData(prev => prev + BD_REWARD.CLICK_FOOD);
+      }
+  };
+
+  const handlePurchase = (upgrade: Upgrade) => {
+      if (bioData >= upgrade.cost && !unlockedUpgrades.includes(upgrade.id)) {
+          setBioData(prev => prev - upgrade.cost);
+          setUnlockedUpgrades(prev => [...prev, upgrade.id]);
+
+          // Apply Effects
+          if (upgrade.effect) {
+              const newConfig = { ...config, ...upgrade.effect(config) };
+              setConfig(newConfig);
+              // Live update the engine
+              if (engineRef.current) {
+                  engineRef.current.config = newConfig;
+                  
+                  // Specific logic updates
+                  if (upgrade.id === 'NUTRIENT_AGAR') {
+                      engineRef.current.spawnFood(); 
+                  }
+              }
+          }
+      }
+  };
+
   return (
     <>
       {appState === 'SPLASH' && (
@@ -518,6 +586,7 @@ const App: React.FC = () => {
             camera={camera}
             followingBotId={followingBotId}
             isRunning={isRunning}
+            onInteract={handleInteraction}
           />
           
           <div className="absolute top-0 left-0 bottom-0 z-30">
@@ -538,12 +607,25 @@ const App: React.FC = () => {
                 onToggleMomBot={() => setShowMomBotPanel(!showMomBotPanel)}
                 showDriftPanel={showDriftPanel}
                 onToggleDriftPanel={() => setShowDriftPanel(!showDriftPanel)}
+                // Game Props
+                bioData={bioData}
+                unlockedUpgrades={unlockedUpgrades}
+                onOpenResearch={() => setShowResearchPanel(true)}
              />
           </div>
           
           <AnalysisPanel result={analysisResult} onClose={() => setAnalysisResult(null)} />
           <DriftPanel isOpen={showDriftPanel} onClose={() => setShowDriftPanel(false)} history={geneticHistory} />
           
+          {showResearchPanel && (
+              <ResearchPanel 
+                  bioData={bioData}
+                  unlockedUpgrades={unlockedUpgrades}
+                  onPurchase={handlePurchase}
+                  onClose={() => setShowResearchPanel(false)}
+              />
+          )}
+
           {showSettings && (
              <SettingsPanel 
                 config={config} 
@@ -557,6 +639,11 @@ const App: React.FC = () => {
                     setConfig(data.config);
                     initSimulation(data.config, data.population, data.generation);
                     setShowSettings(false);
+                    // Load Research State
+                    if (data.researchState) {
+                        setBioData(data.researchState.bioData);
+                        setUnlockedUpgrades(data.researchState.unlockedUpgrades);
+                    }
                 }}
                 onClose={() => {
                     // Just close and resume, do NOT reset simulation
@@ -565,6 +652,12 @@ const App: React.FC = () => {
                 }}
                 population={populationRef.current}
                 generation={generation}
+                researchState={{
+                    bioData,
+                    unlockedUpgrades,
+                    clickMultiplier: 1,
+                    passiveMultiplier: 1
+                }}
              />
           )}
 

@@ -1,3 +1,4 @@
+
 import React, { useRef, useEffect, useLayoutEffect } from 'react';
 import { Xenobot, CameraState, Food } from '../types';
 import { COLORS, FOOD_RADIUS } from '../constants';
@@ -141,6 +142,7 @@ interface SimulationCanvasProps {
   camera: CameraState;
   followingBotId: string | null;
   isRunning: boolean;
+  onInteract: (type: 'BOT' | 'FOOD', id: string, x: number, y: number) => void;
 }
 
 export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ 
@@ -151,7 +153,8 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
   groundY, 
   camera, 
   followingBotId, 
-  isRunning 
+  isRunning,
+  onInteract
 }) => {
   const canvas2dRef = useRef<HTMLCanvasElement>(null);
   const canvasGlRef = useRef<HTMLCanvasElement>(null);
@@ -220,6 +223,43 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
 
   const handleMouseLeave = () => {
       mouseRef.current = null;
+  };
+
+  const handleClick = (e: React.MouseEvent) => {
+    const bots = botsRef.current;
+    const food = foodRef.current;
+    if (!bots || !food) return;
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+    
+    // Transform click to World Space
+    const safeZoom = Math.max(0.1, Math.min(5.0, camera.zoom)) || 1.0;
+    const worldX = (clickX - width/2) / safeZoom + camera.x;
+    const worldY = (clickY - height/2) / safeZoom + camera.y;
+
+    // Check Bot Collision (Approximate using Center of Mass)
+    const BOT_HIT_RADIUS_SQ = 60 * 60; // 60px radius
+    for(const b of bots) {
+        const dx = b.centerOfMass.x - worldX;
+        const dy = b.centerOfMass.y - worldY;
+        if (dx*dx + dy*dy < BOT_HIT_RADIUS_SQ) {
+            onInteract('BOT', b.id, clickX, clickY);
+            return; // Stop after one hit
+        }
+    }
+
+    // Check Food Collision
+    const FOOD_HIT_RADIUS_SQ = 30 * 30;
+    for(const f of food) {
+        const dx = f.x - worldX;
+        const dy = f.y - worldY;
+        if (dx*dx + dy*dy < FOOD_HIT_RADIUS_SQ) {
+            onInteract('FOOD', f.id, clickX, clickY);
+            return;
+        }
+    }
   };
 
   // --- Main Render Loop (Decoupled from React State) ---
@@ -658,8 +698,10 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
              width, 
              height, 
              backgroundColor: '#020617', // Fallback color
-             backgroundImage: 'radial-gradient(circle at center, #0f172a 0%, #020617 100%)' 
+             backgroundImage: 'radial-gradient(circle at center, #0f172a 0%, #020617 100%)',
+             cursor: 'crosshair'
          }}
+         onClick={handleClick}
          onMouseMove={handleMouseMove}
          onMouseLeave={handleMouseLeave}
     >

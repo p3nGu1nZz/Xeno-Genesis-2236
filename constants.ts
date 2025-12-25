@@ -1,4 +1,5 @@
-import { SimulationConfig } from './types';
+
+import { SimulationConfig, Upgrade } from './types';
 
 export const INITIAL_POPULATION_SIZE = 2; 
 export const MAX_POPULATION_CAP = 10000; 
@@ -47,3 +48,61 @@ export const FOOD_ENERGY = 500;
 export const FOOD_RADIUS = 15;
 export const BREAKING_THRESHOLD = 150.0; 
 export const COLLISION_RADIUS = 12.0;
+
+// --- GAMEPLAY CONSTANTS ---
+
+export const BD_REWARD = {
+    CLICK_BOT: 15,
+    CLICK_FOOD: 2,
+    PASSIVE_EAT: 5,
+    PASSIVE_MITOSIS: 150,
+    SURVIVAL_TICK: 0.1
+};
+
+export const UPGRADES: Upgrade[] = [
+    {
+        id: 'NUTRIENT_AGAR',
+        name: 'Nutrient Rich Agar',
+        description: 'Increases food spawn density by 50%.',
+        cost: 250,
+        icon: 'Leaf',
+        effect: (c) => ({ foodCount: Math.min(10000, c.foodCount * 1.5) })
+    },
+    {
+        id: 'FLUIDIC_SMOOTHING',
+        name: 'Fluidic Smoothing',
+        description: 'Reduces medium viscosity, allowing 20% faster movement.',
+        cost: 600,
+        icon: 'Wind',
+        effect: (c) => ({ friction: 0.99 }) // Less friction
+    },
+    {
+        id: 'GENOME_SEQUENCER',
+        name: 'Genome Sequencer',
+        description: 'Unlocks the Genome Database panel to view topology.',
+        cost: 1200,
+        icon: 'Dna'
+    },
+    {
+        id: 'POPULATION_EXPANSION_1',
+        name: 'Bioreactor v2.0',
+        description: 'Increases max population cap to 50.',
+        cost: 2500,
+        icon: 'Users',
+        effect: (c) => ({ populationSize: 50 })
+    },
+    {
+        id: 'DRIFT_ANALYSIS',
+        name: 'Drift Analytics',
+        description: 'Unlocks the Genetic Drift historical graph.',
+        cost: 3500,
+        icon: 'TrendingUp'
+    },
+    {
+        id: 'MOMBOT_LINK',
+        name: 'MomBot Neural Link',
+        description: 'Establish connection with the MomBot AI Controller.',
+        cost: 10000,
+        icon: 'Bot'
+    }
+];

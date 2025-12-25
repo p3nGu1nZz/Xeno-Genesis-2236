@@ -1,6 +1,6 @@
 
 import React, { useState, useRef } from 'react';
-import { SimulationConfig, SaveData, Genome } from '../types';
+import { SimulationConfig, SaveData, Genome, ResearchState } from '../types';
 import { Save, Upload, RefreshCw, X, Sliders, PlayCircle } from 'lucide-react';
 
 interface SettingsPanelProps {
@@ -10,6 +10,7 @@ interface SettingsPanelProps {
   onClose: () => void;
   population: Genome[];
   generation: number;
+  researchState: ResearchState;
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ 
@@ -18,7 +19,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onLoad, 
   onClose,
   population,
-  generation
+  generation,
+  researchState
 }) => {
   const [localConfig, setLocalConfig] = useState<SimulationConfig>({ ...config });
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -32,7 +34,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       config: localConfig,
       population,
       generation,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      researchState
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);

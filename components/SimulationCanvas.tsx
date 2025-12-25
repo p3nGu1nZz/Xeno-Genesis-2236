@@ -55,10 +55,9 @@ const FS_SOURCE = `
     
     // Scale field physics with zoom
     float zoomScale = max(0.1, u_zoom);
-    // Tighter base radius for a concise, localized field effect
-    // Reduced size and reduced zoom impact (power < 1.0)
-    // Updated: Increased radius slightly for more "glow"
-    float radiusBase = 6.0 * pow(zoomScale, 0.85); 
+    
+    // Reduced base radius to prevent screen takeover (was 12.0)
+    float radiusBase = 4.0 * pow(zoomScale, 0.8); 
     float radiusSq = radiusBase * radiusBase;
     
     float field = 0.0;
@@ -75,8 +74,11 @@ const FS_SOURCE = `
         float distSq = dot(diff, diff);
         
         // Inverse square law for electric field
-        float epsilon = 2.0 * zoomScale;
-        float contrib = (p.z * radiusSq) / (distSq + epsilon); 
+        float epsilon = 0.5 * zoomScale;
+        
+        // Reduced contribution multiplier significantly (p.z can be 500.0)
+        // Was 2.5, now 0.05 to compensate for high charge values
+        float contrib = (p.z * radiusSq * 0.05) / (distSq + epsilon); 
         
         field += contrib;
         weightedIrruption += p.w * contrib;
@@ -90,21 +92,21 @@ const FS_SOURCE = `
     vec2 worldUV = (gl_FragCoord.xy / u_zoom) + u_offset;
 
     // Dynamic Distortion (Heat Haze + Electric flux)
-    // Increased frequency and intensity for a more active field look
     float distortNoise = noise(worldUV * 0.008 + vec2(u_time * 0.05)); 
-    // Intensity heavily scaled by field strength
-    // Increased distortion scaling for enhanced visual effect
-    vec2 distortedUV = worldUV + vec2(distortNoise) * field * 120.0; 
+    
+    // Reduced distortion scale from 250.0 to 30.0 for cleaner visuals
+    vec2 distortedUV = worldUV + vec2(distortNoise) * field * 30.0; 
 
     // Electric arcs / filaments on distorted UVs - Slower animation
     float n = fbm(distortedUV * 0.005 + vec2(0.0, u_time * 0.02));
     
-    // Steady State Flow - No pulsing, just slow evolution
+    // Steady State Flow
     float flow = field * (0.95 + 0.05 * n);
     
     vec4 color = vec4(0.0);
     
-    if (flow > 0.05) {
+    // Increased cutoff from 0.05 to 0.15 to remove infinite faint glow
+    if (flow > 0.15) {
        vec3 cCalm = vec3(0.0, 0.5, 1.0); // Cyan/Blue
        vec3 cActive = vec3(1.0, 0.0, 0.8); // Magenta
        
@@ -112,16 +114,17 @@ const FS_SOURCE = `
        vec3 cCore = mix(baseColor, vec3(1.0), 0.5);
        vec3 cElec = vec3(0.8, 0.9, 1.0);
 
-       float alpha = smoothstep(0.05, 0.25, flow);
-       alpha = clamp(alpha, 0.0, 0.95); // Increased max opacity for brighter fields
+       // Sharper falloff
+       float alpha = smoothstep(0.15, 0.4, flow);
+       alpha = clamp(alpha, 0.0, 0.90); 
 
-       vec3 rgb = baseColor * flow * 1.5;
+       vec3 rgb = baseColor * flow * 1.5; 
        
        // Subtle electric lines
        float electricity = smoothstep(0.42, 0.45, n * field);
        rgb += cElec * electricity * 1.0;
        
-       rgb += cCore * smoothstep(0.8, 1.5, flow);
+       rgb += cCore * smoothstep(1.0, 2.0, flow);
 
        color = vec4(rgb * alpha, alpha);
     }
@@ -262,19 +265,77 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
           }
       }
 
-      // Grid
-      ctx.strokeStyle = 'rgba(0, 243, 255, 0.05)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      // Expanded grid rendering area
-      const startX = Math.floor((camera.x - width/2/safeZoom) / 100) * 100 - 200;
-      const endX = Math.ceil((camera.x + width/2/safeZoom) / 100) * 100 + 200;
-      const startY = Math.floor((camera.y - height/2/safeZoom) / 100) * 100 - 200;
-      const endY = Math.ceil((camera.y + height/2/safeZoom) / 100) * 100 + 200;
+      // --- ENHANCED GRID RENDERING ---
+      // Define Viewport Bounds in World Space
+      const viewportHalfWidth = width / (2 * safeZoom);
+      const viewportHalfHeight = height / (2 * safeZoom);
+      
+      const viewMinX = camera.x - viewportHalfWidth;
+      const viewMaxX = camera.x + viewportHalfWidth;
+      const viewMinY = camera.y - viewportHalfHeight;
+      const viewMaxY = camera.y + viewportHalfHeight;
 
-      for (let x = startX; x < endX; x += 100) { ctx.moveTo(x, startY); ctx.lineTo(x, endY); }
-      for (let y = startY; y < endY; y += 100) { ctx.moveTo(startX, y); ctx.lineTo(endX, y); }
+      // Round to nearest 100/500 for clean loops
+      const startX = Math.floor(viewMinX / 100) * 100 - 100;
+      const endX = Math.ceil(viewMaxX / 100) * 100 + 100;
+      const startY = Math.floor(viewMinY / 100) * 100 - 100;
+      const endY = Math.ceil(viewMaxY / 100) * 100 + 100;
+
+      // 1. Minor Grid (100 units)
+      ctx.beginPath();
+      // Improved Visibility for Dark Theme
+      ctx.strokeStyle = 'rgba(0, 243, 255, 0.05)';
+      ctx.lineWidth = 1 / safeZoom; 
+      if (ctx.lineWidth < 0.5) ctx.lineWidth = 0.5;
+      
+      for (let x = startX; x <= endX; x += 100) {
+        if (x % 500 === 0) continue; // Skip major lines
+        ctx.moveTo(x, startY);
+        ctx.lineTo(x, endY);
+      }
+      for (let y = startY; y <= endY; y += 100) {
+        if (y % 500 === 0) continue; // Skip major lines
+        ctx.moveTo(startX, y);
+        ctx.lineTo(endX, y);
+      }
       ctx.stroke();
+
+      // 2. Major Grid (500 units)
+      ctx.beginPath();
+      ctx.strokeStyle = 'rgba(0, 243, 255, 0.15)'; // Brighter
+      ctx.lineWidth = 1.5 / safeZoom; 
+      if (ctx.lineWidth < 1) ctx.lineWidth = 1;
+
+      for (let x = startX; x <= endX; x += 100) {
+        if (x % 500 !== 0) continue;
+        ctx.moveTo(x, startY);
+        ctx.lineTo(x, endY);
+      }
+      for (let y = startY; y <= endY; y += 100) {
+        if (y % 500 !== 0) continue;
+        ctx.moveTo(startX, y);
+        ctx.lineTo(endX, y);
+      }
+      ctx.stroke();
+
+      // 3. Axis Lines (0,0) - Only draw if in view
+      ctx.beginPath();
+      ctx.strokeStyle = 'rgba(0, 243, 255, 0.5)'; // Much brighter for origin
+      ctx.lineWidth = 2 / safeZoom;
+      if (ctx.lineWidth < 1.5) ctx.lineWidth = 1.5;
+
+      // X-Axis
+      if (viewMinY < 0 && viewMaxY > 0) {
+        ctx.moveTo(startX, 0);
+        ctx.lineTo(endX, 0);
+      }
+      // Y-Axis
+      if (viewMinX < 0 && viewMaxX > 0) {
+        ctx.moveTo(0, startY);
+        ctx.lineTo(0, endY);
+      }
+      ctx.stroke();
+      // --- END GRID ---
 
       // Render Food
       if (food && food.length > 0) {
@@ -597,11 +658,27 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
          style={{ 
              width, 
              height, 
-             background: 'linear-gradient(to bottom, #020617 -50%, #0f172a 50%, #020617 150%)'
+             backgroundColor: '#020617', // Fallback color
+             backgroundImage: 'radial-gradient(circle at center, #0f172a 0%, #020617 100%)' 
          }}
          onMouseMove={handleMouseMove}
          onMouseLeave={handleMouseLeave}
     >
+       {/* Static Grid Pattern Overlay for Texture */}
+       <div className="absolute inset-0 z-0 pointer-events-none opacity-[0.07]" 
+            style={{ 
+                backgroundImage: 'linear-gradient(#00f3ff 1px, transparent 1px), linear-gradient(90deg, #00f3ff 1px, transparent 1px)', 
+                backgroundSize: '40px 40px' 
+            }} 
+       />
+
+       {/* Vignette Overlay to darken edges */}
+       <div className="absolute inset-0 z-0 pointer-events-none"
+            style={{
+                background: 'radial-gradient(circle at center, transparent 0%, rgba(2, 6, 23, 0.8) 100%)'
+            }}
+       />
+
        <canvas 
           ref={canvasGlRef}
           width={width}

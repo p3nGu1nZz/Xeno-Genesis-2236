@@ -303,10 +303,10 @@ export class PhysicsEngine {
       const particles = bot.particles;
       const mStrength = this.config.muscleStrength;
       const mSpeed = this.config.muscleSpeed;
-      const chargeLimit = 200.0; 
+      const chargeLimit = 500.0; // Increased limit for more intense field visuals
       
       const decayFactor = METABOLIC_DECAY * 0.05; 
-      const dampingCoefficient = 1.1; // Increased slightly to reduce pulsing
+      const dampingCoefficient = 1.1; 
 
       for (const s of springs) {
           const p1 = particles[s.p1];
@@ -316,11 +316,9 @@ export class PhysicsEngine {
           if (s.isMuscle) {
               bot.energy -= decayFactor;
               const avgCharge = (p1.charge + p2.charge) * 0.5;
-              // Adjusted frequency modulator to be less aggressive with high charge
               const freqMod = 1.0 + avgCharge * 0.2; 
               
               const contraction = Math.sin(time * mSpeed * freqMod + (s.phaseOffset || 0));
-              // Reduced amplitude (0.35) to prevent visual jittering/pulsing artifacts
               s.currentRestLength = s.restLength * (1.0 + contraction * mStrength * 0.35);
           } else {
               s.currentRestLength = s.restLength;
@@ -332,10 +330,10 @@ export class PhysicsEngine {
           const distSq = dx*dx + dy*dy;
           const currLen = Math.sqrt(distSq);
           
-          // Charge Gen
+          // Charge Gen - SIGNIFICANTLY INCREASED SENSITIVITY
           const strain = Math.abs(currLen - s.currentRestLength) / s.currentRestLength;
           if (strain > 0.05) {
-             const chargeGen = strain * 10.0;
+             const chargeGen = strain * 50.0; // Increased from 10.0 to 50.0 for higher impact
              p1.charge = Math.min(chargeLimit, p1.charge + chargeGen);
              p2.charge = Math.min(chargeLimit, p2.charge + chargeGen);
           }
@@ -467,7 +465,10 @@ export class PhysicsEngine {
 
         p.force.x = 0;
         p.force.y = 0;
-        p.charge *= 0.999995; 
+        
+        // DECAY ADJUSTMENT: Slowed decay rate for longer lasting field
+        // Was 0.999995 -> Now 0.999999 (almost negligible per step)
+        p.charge *= 0.999999; 
 
         centerX += p.pos.x;
         centerY += p.pos.y;

@@ -121,6 +121,7 @@ export class PhysicsEngine {
                     const isMuscle = (type1 === CellType.HEART || type2 === CellType.HEART);
                     const isNeuron = (type1 === CellType.NEURON || type2 === CellType.NEURON);
                     
+                    // RESTORED: Higher stiffness for better swimming
                     let stiffness = 1.0; 
                     
                     if (type1 === CellType.NEURON && type2 === CellType.NEURON) {
@@ -220,8 +221,8 @@ export class PhysicsEngine {
 
         const energyGained = this.checkFoodConsumption(bot);
         
-        // Reverted irruption sensitivity
-        bot.irruption = Math.min(1.0, bot.totalCharge * 0.1);
+        // RESTORED: Irruption sensitivity for visuals
+        bot.irruption = Math.min(1.0, bot.totalCharge * 0.0002);
         bot.absorption = Math.min(1.0, (energyGained > 0 ? 0.5 : 0));
 
         if (bot.energy > MITOSIS_THRESHOLD && 
@@ -303,11 +304,15 @@ export class PhysicsEngine {
       const mStrength = this.config.muscleStrength;
       const mSpeed = this.config.muscleSpeed;
       
-      // Reverted: Charge limit
-      const chargeLimit = 500.0; 
+      // RESTORED: High charge limit for visuals
+      const chargeLimit = 2500.0; 
       
       const decayFactor = METABOLIC_DECAY * 0.05; 
-      const dampingCoefficient = 1.1; 
+      // BALANCED DAMPING: Enough to stop chaos, low enough to allow swimming
+      const dampingCoefficient = 1.25; 
+      
+      // Force limit
+      const maxSpringForce = 50.0;
 
       for (const s of springs) {
           const p1 = particles[s.p1];
@@ -331,10 +336,10 @@ export class PhysicsEngine {
           const distSq = dx*dx + dy*dy;
           const currLen = Math.sqrt(distSq);
           
-          // Charge Gen - Reverted
+          // RESTORED: High charge generation
           const strain = Math.abs(currLen - s.currentRestLength) / s.currentRestLength;
           if (strain > 0.05) { 
-             const chargeGen = strain * 100.0; 
+             const chargeGen = strain * 300.0; 
              p1.charge = Math.min(chargeLimit, p1.charge + chargeGen);
              p2.charge = Math.min(chargeLimit, p2.charge + chargeGen);
           }
@@ -354,7 +359,10 @@ export class PhysicsEngine {
               
               const fSpring = displacement * s.stiffness;
               const fDamp = vRel * dampingCoefficient;
-              const fTotal = -(fSpring + fDamp);
+              
+              // Force clamping
+              let fTotal = -(fSpring + fDamp);
+              fTotal = Math.max(-maxSpringForce, Math.min(maxSpringForce, fTotal));
 
               const fx = nx * fTotal;
               const fy = ny * fTotal;
@@ -369,7 +377,8 @@ export class PhysicsEngine {
   }
 
   private resolveConstraints(bot: Xenobot) {
-      const iterations = CONSTRAINT_ITERATIONS;
+      // JITTER FIX: Increase iterations instead of overdamping
+      const iterations = CONSTRAINT_ITERATIONS * 2; 
       const springs = bot.springs;
       const particles = bot.particles;
       const rate = 0.15; 
@@ -451,8 +460,10 @@ export class PhysicsEngine {
         p.oldPos.x = p.pos.x;
         p.oldPos.y = p.pos.y;
 
-        let newVx = vx * globalFriction + p.force.x * dtSq;
-        let newVy = vy * globalFriction + p.force.y * dtSq;
+        // Integration with invMass
+        const invMass = 1.0 / (p.mass || 1.0);
+        let newVx = vx * globalFriction + (p.force.x * invMass) * dtSq;
+        let newVy = vy * globalFriction + (p.force.y * invMass) * dtSq;
 
         const velMag = Math.sqrt(newVx*newVx + newVy*newVy);
         if (velMag > MAX_VELOCITY) {
@@ -467,8 +478,8 @@ export class PhysicsEngine {
         p.force.x = 0;
         p.force.y = 0;
         
-        // Reverted: Decay to 0.95
-        p.charge *= 0.95; 
+        // RESTORED: Slower decay for persistent field
+        p.charge *= 0.99; 
 
         centerX += p.pos.x;
         centerY += p.pos.y;
@@ -647,7 +658,9 @@ export class PhysicsEngine {
   }
 
   public smoothRenderPositions() {
-      // Reverted to LERP for stability
+      // VISUAL FIX: Tighter LERP (0.35) prevents detachment while smoothing jitter
+      const t = 0.35; 
+      
       this.bots.forEach(b => {
           b.particles.forEach(p => {
               if (!p.renderVel) p.renderVel = { x: 0, y: 0 };
@@ -663,8 +676,6 @@ export class PhysicsEngine {
                   p.renderPos.x = targetX;
                   p.renderPos.y = targetY;
               } else {
-                  // Simple LERP
-                  const t = 0.25;
                   p.renderPos.x += dx * t;
                   p.renderPos.y += dy * t;
               }

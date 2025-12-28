@@ -7,16 +7,22 @@ import { GRID_SIZE } from '../constants';
 // Surrounding Ring: Alternating HEART / SKIN
 const PLATONIC_IDEAL_MAP: Record<string, CellType> = {};
 
-// Initialize the ideal map
+// Initialize the ideal map centered dynamically based on GRID_SIZE
+const center = GRID_SIZE / 2;
+const coreStart = Math.floor(center - 1);
+const coreEnd = Math.floor(center);
+const ringStart = Math.floor(center - 2);
+const ringEnd = Math.floor(center + 1);
+
 for (let y = 0; y < GRID_SIZE; y++) {
     for (let x = 0; x < GRID_SIZE; x++) {
         const key = `${x},${y}`;
-        // Center 2x2 (Indices 2,3 for GRID_SIZE 6)
-        if (x >= 2 && x <= 3 && y >= 2 && y <= 3) {
+        // Center 2x2 Core (Neurons)
+        if (x >= coreStart && x <= coreEnd && y >= coreStart && y <= coreEnd) {
             PLATONIC_IDEAL_MAP[key] = CellType.NEURON;
         }
-        // Ring 1 (Indices 1 to 4)
-        else if (x >= 1 && x <= 4 && y >= 1 && y <= 4) {
+        // Surrounding Ring (Muscles/Skin)
+        else if (x >= ringStart && x <= ringEnd && y >= ringStart && y <= ringEnd) {
             // Alternating pattern for the ring
             if ((x + y) % 2 === 0) {
                 PLATONIC_IDEAL_MAP[key] = CellType.HEART;

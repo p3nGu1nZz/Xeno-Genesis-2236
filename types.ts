@@ -29,6 +29,7 @@ export interface Particle {
   phase: number; // Topological phase for metachronal rhythm
   gx?: number; // Grid X coordinate in genome
   gy?: number; // Grid Y coordinate in genome
+  bodyId?: number; // Link to Matter.js Body ID
 }
 
 export interface Spring {
@@ -39,6 +40,7 @@ export interface Spring {
   stiffness: number;
   isMuscle: boolean; 
   phaseOffset?: number; 
+  matterConstraintId?: number; // Link to Matter.js Constraint ID
 }
 
 export interface Genome {
@@ -70,6 +72,7 @@ export interface Xenobot {
   absorption: number; // Conscious Experience: Magnitude of material events integrated into mind
   lastCollisionTime?: number;
   lastCollisionPoint?: Point;
+  matterCompositeId?: number; // Link to Matter.js Composite
 }
 
 export interface Food {

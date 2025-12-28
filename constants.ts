@@ -3,7 +3,7 @@ import { SimulationConfig, Upgrade } from './types';
 
 export const INITIAL_POPULATION_SIZE = 2; 
 export const MAX_POPULATION_CAP = 10000; 
-export const GRID_SIZE = 6; 
+export const GRID_SIZE = 12; // Increased to allow larger swimmers
 export const EVOLUTION_INTERVAL = 3600; // 60 seconds at 60fps
 export const DEFAULT_FOOD_COUNT = 4000; 
 
@@ -12,7 +12,7 @@ export const DEFAULT_CONFIG: SimulationConfig = {
   maxPopulationSize: MAX_POPULATION_CAP,
   foodCount: DEFAULT_FOOD_COUNT,
   gravity: 0.0, 
-  friction: 0.92, // Increased Drag (Lower value = more resistance)
+  friction: 0.98, // High friction for "Thick" fluid feel
   muscleStrength: 0.7, 
   muscleSpeed: 0.015, // Slower, more organic heartbeat
   groundHeight: 0, 
@@ -40,11 +40,12 @@ export const TIMESTEP = 0.12;
 export const CONSTRAINT_ITERATIONS = 3; 
 
 // Biological Constants based on papers
-export const CILIA_FORCE = 1.2; // Reduced propulsion for slower movement
+// INCREASED FORCE to compensate for high fluid drag (swimming vs sliding)
+export const CILIA_FORCE = 6.0; 
 export const METABOLIC_DECAY = 0.01; 
 export const INITIAL_YOLK_ENERGY = 200; // Low start so growth bar is at ~5% initially
-export const GROWTH_COST = 3000; // Higher cost so bar fills slowly
-export const MAX_BOT_SIZE = 32; // Increased to ensure initial bots (avg 18 nodes) can grow
+export const GROWTH_COST = 2500; // Slightly reduced to make early growth feel responsive
+export const MAX_BOT_SIZE = 64; // Increased cap to prevent early growth locking
 export const MITOSIS_THRESHOLD = 6000; // Threshold for colony splitting
 export const SURFACE_TENSION = 0.005; 
 export const FOOD_ENERGY = 150; // Small increment per food

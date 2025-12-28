@@ -255,11 +255,13 @@ export const Controls: React.FC<ControlsProps> = ({
                       <div className="space-y-1">
                           <div className="flex justify-between text-[10px] text-slate-500">
                               <span className="flex items-center gap-1"><Sprout size={10} className="text-yellow-400"/> GROWTH</span>
-                              <span className="text-yellow-400">{Math.floor(growthProgress * 100)}%</span>
+                              <span className="text-yellow-400">
+                                {growthProgress >= 1.0 ? "MAX SIZE" : `${Math.floor(growthProgress * 100)}%`}
+                              </span>
                           </div>
                           <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
                              <div 
-                                className="h-full bg-yellow-400 shadow-[0_0_8px_#facc15]" 
+                                className={`h-full shadow-[0_0_8px_#facc15] ${growthProgress >= 1.0 ? 'bg-orange-500 shadow-[0_0_8px_#f97316]' : 'bg-yellow-400'}`} 
                                 style={{ width: `${growthProgress * 100}%`, transition: 'width 0.2s linear' }}
                              ></div>
                           </div>

@@ -623,7 +623,68 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
             ctx.restore();
         }
       }
-      ctx.restore();
+      ctx.restore(); // Restore from World Space (Zoom/Pan)
+
+      // --- CUSTOM CURSOR RENDERING (Screen Space) ---
+      if (mouseRef.current) {
+         ctx.save();
+         const { x, y } = mouseRef.current;
+         ctx.translate(x, y);
+
+         if (activeTool === 'SCANNER') {
+             // 1. Scanner Circle (Tiny circle as requested, with potential for growth)
+             // Base radius 15, slightly pulsating
+             const pulse = Math.sin(Date.now() * 0.005) * 2;
+             const baseRadius = 15; // Starting small as requested ("tiny circle")
+             
+             ctx.beginPath();
+             ctx.strokeStyle = TOOL_COLORS.SCANNER;
+             ctx.lineWidth = 2;
+             ctx.shadowColor = TOOL_COLORS.SCANNER;
+             ctx.shadowBlur = 10;
+             ctx.arc(0, 0, baseRadius + pulse, 0, Math.PI * 2);
+             ctx.stroke();
+             
+             // Center dot
+             ctx.beginPath();
+             ctx.fillStyle = TOOL_COLORS.SCANNER;
+             ctx.arc(0, 0, 2, 0, Math.PI * 2);
+             ctx.fill();
+
+         } else if (activeTool === 'INJECTOR') {
+             // 2. Injector Triangle (Pointing Down)
+             const size = 12;
+             ctx.beginPath();
+             ctx.strokeStyle = TOOL_COLORS.INJECTOR;
+             ctx.fillStyle = 'rgba(57, 255, 20, 0.2)'; // Faint green fill
+             ctx.lineWidth = 2;
+             ctx.shadowColor = TOOL_COLORS.INJECTOR;
+             ctx.shadowBlur = 10;
+             
+             // Draw Equilateral Triangle
+             ctx.moveTo(-size, -size * 0.5);
+             ctx.lineTo(size, -size * 0.5);
+             ctx.lineTo(0, size);
+             ctx.closePath();
+             
+             ctx.fill();
+             ctx.stroke();
+
+         } else if (activeTool === 'MUTAGEN') {
+             // Optional: Custom cursor for Mutagen too (Spinning X)
+             ctx.beginPath();
+             ctx.strokeStyle = TOOL_COLORS.MUTAGEN;
+             ctx.lineWidth = 2;
+             const size = 10;
+             ctx.moveTo(-size, -size);
+             ctx.lineTo(size, size);
+             ctx.moveTo(size, -size);
+             ctx.lineTo(-size, size);
+             ctx.stroke();
+         }
+         
+         ctx.restore();
+      }
     }
 
     // WebGL Render
@@ -728,8 +789,9 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
   // --- Dynamic Cursor Styles based on Tool ---
   const cursorStyle = (() => {
       switch(activeTool) {
-          case 'INJECTOR': return 'crosshair';
-          case 'MUTAGEN': return 'help';
+          case 'SCANNER': return 'none'; // Custom cursor drawn
+          case 'INJECTOR': return 'none'; // Custom cursor drawn
+          case 'MUTAGEN': return 'none'; // Custom cursor drawn
           case 'REAPER': return 'not-allowed'; // Or a custom crosshair
           default: return 'crosshair';
       }

@@ -6,10 +6,12 @@ export const MAX_POPULATION_CAP = 10000;
 export const GRID_SIZE = 12; // Increased to allow larger swimmers
 export const EVOLUTION_INTERVAL = 3600; // 60 seconds at 60fps
 export const DEFAULT_FOOD_COUNT = 4000; 
+export const INITIAL_MAX_BOT_SIZE = 50; // New Initial Cap
 
 export const DEFAULT_CONFIG: SimulationConfig = {
   populationSize: INITIAL_POPULATION_SIZE,
   maxPopulationSize: MAX_POPULATION_CAP,
+  maxBotSize: INITIAL_MAX_BOT_SIZE,
   foodCount: DEFAULT_FOOD_COUNT,
   gravity: 0.0, 
   friction: 0.98, // High friction for "Thick" fluid feel
@@ -41,11 +43,12 @@ export const CONSTRAINT_ITERATIONS = 3;
 
 // Biological Constants based on papers
 // INCREASED FORCE to compensate for high fluid drag (swimming vs sliding)
-export const CILIA_FORCE = 6.0; 
+export const CILIA_FORCE = 8.5; // Increased further for propulsion
 export const METABOLIC_DECAY = 0.01; 
 export const INITIAL_YOLK_ENERGY = 200; // Low start so growth bar is at ~5% initially
 export const GROWTH_COST = 2500; // Slightly reduced to make early growth feel responsive
-export const MAX_BOT_SIZE = 64; // Increased cap to prevent early growth locking
+// This is now just a safety fallback, actual logic uses config.maxBotSize
+export const MAX_BOT_SIZE = INITIAL_MAX_BOT_SIZE; 
 export const MITOSIS_THRESHOLD = 6000; // Threshold for colony splitting
 export const SURFACE_TENSION = 0.005; 
 export const FOOD_ENERGY = 150; // Small increment per food
@@ -86,7 +89,8 @@ export const UPGRADES: Upgrade[] = [
         name: 'Optical Amplifier V1',
         description: 'Doubles Bio-Data gain from manual scanning (2x Multiplier).',
         cost: 100, // Accessible early
-        icon: 'ScanEye'
+        icon: 'ScanEye',
+        category: 'TECH'
     },
     {
         id: 'NUTRIENT_AGAR',
@@ -94,6 +98,7 @@ export const UPGRADES: Upgrade[] = [
         description: 'Increases food spawn density by 50%.',
         cost: 250,
         icon: 'Leaf',
+        category: 'COLONY',
         effect: (c) => ({ foodCount: Math.min(10000, c.foodCount * 1.5) })
     },
     {
@@ -101,14 +106,25 @@ export const UPGRADES: Upgrade[] = [
         name: 'Optical Amplifier V2',
         description: 'Doubles scanning efficiency again (4x Multiplier).',
         cost: 600,
-        icon: 'Zap'
+        icon: 'Zap',
+        category: 'TECH'
+    },
+    {
+        id: 'STRUCTURAL_FRAMEWORK_1',
+        name: 'Actin Filaments',
+        description: 'Increases Max Bot Node Size to 60, allowing for larger complex organisms.',
+        cost: 1000,
+        icon: 'BoxSelect',
+        category: 'BIOLOGY',
+        effect: (c) => ({ maxBotSize: 60 })
     },
     {
         id: 'CHEMOSTAT_VAT',
         name: 'Chemostat Bioreactor',
         description: 'Increases passive Bio-Data generation from nodes by 100%.',
         cost: 1200,
-        icon: 'FlaskConical'
+        icon: 'FlaskConical',
+        category: 'COLONY'
     },
     {
         id: 'FLUIDIC_SMOOTHING',
@@ -116,21 +132,33 @@ export const UPGRADES: Upgrade[] = [
         description: 'Reduces medium viscosity, allowing 20% faster movement.',
         cost: 2000,
         icon: 'Wind',
+        category: 'BIOLOGY',
         effect: (c) => ({ friction: 0.96 }) 
+    },
+    {
+        id: 'STRUCTURAL_FRAMEWORK_2',
+        name: 'Microtubule Scaffold',
+        description: 'Increases Max Bot Node Size to 80. Enables macro-scale morphology.',
+        cost: 3000,
+        icon: 'BoxSelect',
+        category: 'BIOLOGY',
+        effect: (c) => ({ maxBotSize: 80 })
     },
     {
         id: 'SCAN_AMP_3',
         name: 'Quantum Interferometry',
         description: 'Doubles scanning efficiency again (8x Multiplier).',
         cost: 3500,
-        icon: 'Zap'
+        icon: 'Zap',
+        category: 'TECH'
     },
     {
         id: 'GENOME_SEQUENCER',
         name: 'Genome Sequencer',
         description: 'Unlocks the Genome Database panel to view topology.',
         cost: 5000,
-        icon: 'Dna'
+        icon: 'Dna',
+        category: 'TECH'
     },
     {
         id: 'POPULATION_EXPANSION_1',
@@ -138,6 +166,7 @@ export const UPGRADES: Upgrade[] = [
         description: 'Increases max population cap to 50.',
         cost: 8000,
         icon: 'Users',
+        category: 'COLONY',
         effect: (c) => ({ populationSize: 50 })
     },
     {
@@ -145,20 +174,23 @@ export const UPGRADES: Upgrade[] = [
         name: 'Mitochondrial Tuning',
         description: 'Doubles passive generation again (300% Gain).',
         cost: 15000,
-        icon: 'Activity'
+        icon: 'Activity',
+        category: 'BIOLOGY'
     },
     {
         id: 'DRIFT_ANALYSIS',
         name: 'Drift Analytics',
         description: 'Unlocks the Genetic Drift historical graph.',
         cost: 25000,
-        icon: 'TrendingUp'
+        icon: 'TrendingUp',
+        category: 'TECH'
     },
     {
         id: 'MOMBOT_LINK',
         name: 'MomBot Neural Link',
         description: 'Establish connection with the MomBot AI Controller.',
         cost: 50000,
-        icon: 'Bot'
+        icon: 'Bot',
+        category: 'TECH'
     }
 ];

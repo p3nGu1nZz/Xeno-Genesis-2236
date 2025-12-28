@@ -1,8 +1,8 @@
 
-import React from 'react';
-import { Upgrade, UpgradeID } from '../types';
+import React, { useState } from 'react';
+import { Upgrade, UpgradeID, UpgradeCategory } from '../types';
 import { UPGRADES } from '../constants';
-import { X, Lock, Check, FlaskConical, Dna, Wind, Users, Bot, TrendingUp, Leaf } from 'lucide-react';
+import { X, Check, FlaskConical, Dna, Wind, Users, Bot, TrendingUp, Leaf, BoxSelect, Zap } from 'lucide-react';
 
 interface ResearchPanelProps {
   bioData: number;
@@ -17,7 +17,10 @@ const IconMap: Record<string, React.FC<any>> = {
     'Dna': Dna,
     'Users': Users,
     'Bot': Bot,
-    'TrendingUp': TrendingUp
+    'TrendingUp': TrendingUp,
+    'BoxSelect': BoxSelect,
+    'Zap': Zap,
+    'FlaskConical': FlaskConical
 };
 
 export const ResearchPanel: React.FC<ResearchPanelProps> = ({ 
@@ -26,9 +29,15 @@ export const ResearchPanel: React.FC<ResearchPanelProps> = ({
   onPurchase, 
   onClose 
 }) => {
+  const [activeTab, setActiveTab] = useState<UpgradeCategory>('BIOLOGY');
+
+  const categories: UpgradeCategory[] = ['BIOLOGY', 'COLONY', 'TECH'];
+
+  const filteredUpgrades = UPGRADES.filter(u => u.category === activeTab);
+
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
-      <div className="bg-slate-900 border border-neon-magenta/50 w-[700px] max-h-[80vh] flex flex-col rounded-xl shadow-[0_0_60px_rgba(255,0,255,0.15)] overflow-hidden">
+      <div className="bg-slate-900 border border-neon-magenta/50 w-[750px] max-h-[80vh] flex flex-col rounded-xl shadow-[0_0_60px_rgba(255,0,255,0.15)] overflow-hidden">
         
         {/* Header */}
         <div className="p-6 border-b border-slate-800 bg-slate-950 flex justify-between items-center">
@@ -46,9 +55,30 @@ export const ResearchPanel: React.FC<ResearchPanelProps> = ({
             </button>
         </div>
 
+        {/* Tabs */}
+        <div className="flex border-b border-slate-800 bg-slate-900/50">
+            {categories.map(cat => (
+                <button
+                    key={cat}
+                    onClick={() => setActiveTab(cat)}
+                    className={`flex-1 py-3 text-sm font-bold font-display tracking-widest border-b-2 transition-colors ${
+                        activeTab === cat 
+                        ? 'border-neon-magenta text-white bg-neon-magenta/5' 
+                        : 'border-transparent text-slate-500 hover:text-slate-300 hover:bg-white/5'
+                    }`}
+                >
+                    {cat}
+                </button>
+            ))}
+        </div>
+
         {/* Upgrades List */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-3 custom-scrollbar">
-            {UPGRADES.map((upgrade) => {
+        <div className="flex-1 overflow-y-auto p-6 space-y-3 custom-scrollbar bg-slate-900">
+            {filteredUpgrades.length === 0 && (
+                <div className="text-center text-slate-500 py-10 font-mono">NO UPGRADES AVAILABLE IN THIS SECTOR</div>
+            )}
+            
+            {filteredUpgrades.map((upgrade) => {
                 const isUnlocked = unlockedUpgrades.includes(upgrade.id);
                 const canAfford = bioData >= upgrade.cost;
                 const Icon = IconMap[upgrade.icon] || FlaskConical;

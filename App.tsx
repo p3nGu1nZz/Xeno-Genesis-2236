@@ -417,9 +417,10 @@ const App: React.FC = () => {
               if (groupA.length > 0) {
                   const leader = groupA.reduce((prev, curr) => (curr.energy > prev.energy ? curr : prev));
                   const { growthCost, mitosisCost } = engine.getCosts();
+                  const dynamicMaxSize = engine.config.maxBotSize; // USE DYNAMIC CONFIG LIMIT
 
                   // Growth Bar (Yellow)
-                  const isMaxSize = leader.particles.length >= MAX_BOT_SIZE;
+                  const isMaxSize = leader.particles.length >= dynamicMaxSize;
                   const growthRatio = isMaxSize ? 1.0 : Math.min(1.0, leader.energy / growthCost);
                   setGrowthProgress(growthRatio);
 

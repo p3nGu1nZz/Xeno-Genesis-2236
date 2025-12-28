@@ -244,7 +244,8 @@ export class PhysicsEngine {
       const bot = this.bots.find(b => b.id === botId);
       if (!bot || bot.isDead) return false;
 
-      if (bot.particles.length < MAX_BOT_SIZE) {
+      // Check against Configurable Max Bot Size
+      if (bot.particles.length < this.config.maxBotSize) {
          this.attemptVegetativeGrowth(bot);
       }
       
@@ -275,6 +276,12 @@ export class PhysicsEngine {
 
         // Apply External Forces (Gravity, Cilia)
         this.applyForces(bot, totalTime);
+        
+        // Global Charge Decay (Simulating Field Dissipation)
+        // Slower decay for more persistent visual trails
+        bot.particles.forEach(p => {
+            p.charge *= 0.995; 
+        });
     });
 
     // 2. Physics Step
@@ -310,7 +317,8 @@ export class PhysicsEngine {
             currentGrowthCost = GROWTH_COST * Math.pow(1.25, this.groupAGrowthCount);
         }
 
-        if (bot.energy >= currentGrowthCost && bot.particles.length < MAX_BOT_SIZE) {
+        // Use Configurable Max Size
+        if (bot.energy >= currentGrowthCost && bot.particles.length < this.config.maxBotSize) {
              this.attemptVegetativeGrowth(bot, currentGrowthCost);
         }
 
@@ -336,6 +344,9 @@ export class PhysicsEngine {
     if (this.food.length < this.config.foodCount * 0.8) {
         this.spawnFood();
     }
+    
+    // 4. Visual Smoothing Step
+    this.smoothRenderPositions();
   }
 
   private killBot(bot: Xenobot) {
@@ -376,24 +387,40 @@ export class PhysicsEngine {
                   // Custom Gravity
                   Matter.Body.applyForce(body, body.position, { x: 0, y: gravity * body.mass });
                   
-                  // SWIMMING PROPULSION
-                  // We apply forces proportional to the impulse
-                  // The impulse is already scaled by CILIA_FORCE
-                  Matter.Body.applyForce(body, body.position, { 
-                      x: impulseX * 0.0001, 
-                      y: impulseY * 0.0001 
-                  });
-                  
-                  // Organic Torque (Wiggle)
-                  // Apply slight rotational force to outer nodes to simulate fin movement
+                  // Metachronal Swimming Physics:
+                  // Apply propulsion proportional to position relative to center (Fin effect)
+                  // Outer nodes generate more torque/thrust than inner nodes
                   const dx = body.position.x - bot.centerOfMass.x;
                   const dy = body.position.y - bot.centerOfMass.y;
-                  const dist = Math.sqrt(dx*dx + dy*dy);
-                  if (dist > 10) {
-                      // Tangential force
-                      Matter.Body.applyForce(body, body.position, {
-                          x: -dy * torque * 0.000005,
-                          y: dx * torque * 0.000005
+                  
+                  // Rotate relative position to align with heading
+                  const cosH = Math.cos(-bot.heading);
+                  const sinH = Math.sin(-bot.heading);
+                  const relX = dx * cosH - dy * sinH;
+                  const relY = dx * sinH + dy * cosH;
+                  
+                  // Wiggle wave propagates along body length (X-axis in local space)
+                  const wavePhase = relX * 0.05; 
+                  
+                  // Apply phase-shifted force
+                  // This creates a traveling wave along the body rather than pushing the whole body uniformly
+                  const localThrust = Math.max(0, impulseX * Math.cos(wavePhase));
+                  
+                  // Convert local thrust back to world space
+                  const thrustWorldX = localThrust * Math.cos(bot.heading);
+                  const thrustWorldY = localThrust * Math.sin(bot.heading);
+
+                  Matter.Body.applyForce(body, body.position, { 
+                      x: thrustWorldX * 0.00015, 
+                      y: thrustWorldY * 0.00015
+                  });
+                  
+                  // Rotational Torque (Fin / Rudder Effect)
+                  // Apply forces perpendicular to the radius to induce rotation
+                  if (Math.abs(torque) > 0.01) {
+                       Matter.Body.applyForce(body, body.position, {
+                          x: -dy * torque * 0.000008, // Increased torque constant
+                          y: dx * torque * 0.000008
                       });
                   }
 
@@ -419,14 +446,8 @@ export class PhysicsEngine {
                   p.pos.x = body.position.x;
                   p.pos.y = body.position.y;
                   
-                  // Sync Render Position so Canvas draws correctly
-                  p.renderPos.x = body.position.x;
-                  p.renderPos.y = body.position.y;
-                  
-                  // Sync Velocity
-                  if (!p.renderVel) p.renderVel = { x: 0, y: 0 };
-                  p.renderVel.x = body.velocity.x;
-                  p.renderVel.y = body.velocity.y;
+                  // NOTE: Render position is NOT synced here anymore to allow for smoothing.
+                  // Smoothing logic in smoothRenderPositions() handles the interpolation.
 
                   // Limit velocity if things get crazy
                   const speed = Matter.Vector.magnitude(body.velocity);
@@ -458,7 +479,7 @@ export class PhysicsEngine {
       if (!growthResult) return;
 
       const { newGenome, addedX, addedY } = growthResult;
-      const composite = Matter.Composite.get(this.engine.world, bot.matterCompositeId, null);
+      const composite = Matter.Composite.get(this.engine.world, bot.matterCompositeId, null) as Matter.Composite;
       if (!composite) return;
 
       // Find neighbor to attach to
@@ -670,7 +691,8 @@ export class PhysicsEngine {
           const strain = Math.abs(currLen - constraint.length) / (constraint.length || 1);
           
           if (strain > 0.05) {
-               const chargeGen = strain * 50.0;
+               // INCREASED: Higher multiplier for stronger visual feedback
+               const chargeGen = strain * 85.0; 
                const p1 = bot.particles[spring.p1];
                const p2 = bot.particles[spring.p2];
                p1.charge = Math.min(100, p1.charge + chargeGen);
@@ -688,47 +710,82 @@ export class PhysicsEngine {
       const memory = bot.genome.bioelectricMemory || 0.5;
       const waveSpeed = 2.0 + (memory * 2.0);
       
-      // Impulse Logic: 
-      // Instead of a smooth sine wave (which moves back and forth evenly),
-      // we use a "Power Stroke" logic where force is only applied during the contraction phase.
+      // Impulse Logic (Improved):
+      // More aggressive power stroke curve for sharper movement
       const beat = Math.sin(time * waveSpeed + parseInt(bot.id.substr(0,2), 36));
       
       let strokeIntensity = 0;
       
-      // Power Stroke (Positive Beat): High Thrust
-      if (beat > 0.2) {
-          strokeIntensity = Math.pow(beat, 2); // Sharp impulse
+      // Sharp Power Stroke (Positive Beat)
+      if (beat > 0.0) {
+          strokeIntensity = Math.pow(beat, 3) * 1.5; // Cubic curve for stronger "kick"
       } 
-      // Recovery Stroke (Negative Beat): Little to no thrust (gliding with drag)
+      // Recovery Stroke (Negative Beat) - Drag Phase
       else {
-          strokeIntensity = 0.05 * beat; // Slight drag/repositioning
+          strokeIntensity = 0.1 * beat; // Slight drag
       }
 
       const thrust = CILIA_FORCE * strokeIntensity;
 
       // Steering (Wander)
-      const wander = Math.sin(time * 0.5 + parseInt(bot.id.substr(0,3), 36));
-      const turn = wander * 0.5;
+      const wander = Math.sin(time * 0.3 + parseInt(bot.id.substr(0,3), 36));
+      const turn = wander * 0.8; // Increased turning authority
       
       const impulseX = thrust * (hx - turn * hy);
       const impulseY = thrust * (hy + turn * hx);
       
-      // Torque for wiggling body
-      const torque = strokeIntensity * wander * 2.0;
+      // Torque for wiggling body - strongly correlated to the beat for realistic fish-like motion
+      const torque = strokeIntensity * wander * 4.0; 
 
       return { impulseX, impulseY, torque };
   }
 
   public smoothRenderPositions() {
+      // CRITICALLY DAMPED SPRING SMOOTHING (High-Pass Filter)
+      // Tuned for stability (no oscillation) and responsiveness
+      // stiffness: 1.1 (High stiffness for strong cohesion)
+      // damping: 1.05 (Over-damping to eliminate jitter)
+      const stiffness = 1.1; 
+      const damping = 1.05;
+
       this.bots.forEach(b => {
           b.particles.forEach(p => {
-              // Direct sync for immediate response
-              p.renderPos.x = p.pos.x;
-              p.renderPos.y = p.pos.y;
-              
               if (p.bodyId && this.bodyMap.has(p.bodyId)) {
                   const body = this.bodyMap.get(p.bodyId)!;
-                  p.renderVel = { x: body.velocity.x, y: body.velocity.y };
+                  const targetX = body.position.x;
+                  const targetY = body.position.y;
+                  
+                  if (!p.renderVel) p.renderVel = { x: 0, y: 0 };
+
+                  // 1. Calculate displacement from physical body (Target)
+                  const dx = targetX - p.renderPos.x;
+                  const dy = targetY - p.renderPos.y;
+                  
+                  // 2. Spring Force (Hooke's Law): F = k * x
+                  // 3. Damping Force: F = -c * v
+                  const ax = (dx * stiffness) - (p.renderVel.x * damping);
+                  const ay = (dy * stiffness) - (p.renderVel.y * damping);
+
+                  // 4. Update Velocity
+                  p.renderVel.x += ax;
+                  p.renderVel.y += ay;
+
+                  // 5. Update Render Position
+                  p.renderPos.x += p.renderVel.x;
+                  p.renderPos.y += p.renderVel.y;
+                  
+                  // Safety Teleport: If divergence is too high (e.g. initialization or explosion)
+                  // prevents "rubber banding" artifacts across screen
+                  const distSq = dx*dx + dy*dy;
+                  if (distSq > 3000) {
+                      p.renderPos.x = targetX;
+                      p.renderPos.y = targetY;
+                      p.renderVel = { x: 0, y: 0 };
+                  }
+              } else {
+                  // Fallback for particles without bodies
+                  p.renderPos.x = p.pos.x;
+                  p.renderPos.y = p.pos.y;
               }
           });
       });

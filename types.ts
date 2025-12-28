@@ -86,6 +86,7 @@ export interface Food {
 export interface SimulationConfig {
   populationSize: number; 
   maxPopulationSize: number; 
+  maxBotSize: number; // Dynamic max size limit
   foodCount: number;
   gravity: number;
   friction: number;
@@ -155,7 +156,11 @@ export type UpgradeID =
   | 'POPULATION_EXPANSION_2'
   | 'CILIA_OVERCLOCK'
   | 'DRIFT_ANALYSIS'
-  | 'AUTOCLAVE_PROTOCOL';
+  | 'AUTOCLAVE_PROTOCOL'
+  | 'STRUCTURAL_FRAMEWORK_1'
+  | 'STRUCTURAL_FRAMEWORK_2';
+
+export type UpgradeCategory = 'BIOLOGY' | 'COLONY' | 'TECH';
 
 export interface Upgrade {
   id: UpgradeID;
@@ -163,6 +168,7 @@ export interface Upgrade {
   description: string;
   cost: number;
   icon: string; // Lucide icon name mapping
+  category: UpgradeCategory;
   effect?: (config: SimulationConfig) => Partial<SimulationConfig>;
 }
 

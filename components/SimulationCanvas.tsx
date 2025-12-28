@@ -57,8 +57,8 @@ const FS_SOURCE = `
     // Scale field physics with zoom
     float zoomScale = max(0.1, u_zoom);
     
-    // INCREASED: Larger radius for more prominent field
-    float radiusBase = 12.0 * pow(zoomScale, 0.8); 
+    // REDUCED: Smaller, tighter field radius for steady state
+    float radiusBase = 5.0 * pow(zoomScale, 0.8); 
     float radiusSq = radiusBase * radiusBase;
     
     float field = 0.0;
@@ -77,7 +77,7 @@ const FS_SOURCE = `
         // Inverse square law for electric field
         float epsilon = 0.5 * zoomScale;
         
-        // INCREASED contribution for stronger visual
+        // Contribution calculation
         float contrib = (p.z * radiusSq * 0.05) / (distSq + epsilon); 
         
         field += contrib;
@@ -91,14 +91,14 @@ const FS_SOURCE = `
     
     vec2 worldUV = (gl_FragCoord.xy / u_zoom) + u_offset;
 
-    // Dynamic Distortion (Heat Haze + Electric flux)
-    float distortNoise = noise(worldUV * 0.008 + vec2(u_time * 0.05)); 
+    // STEADY STATE: Very slow noise animation
+    float distortNoise = noise(worldUV * 0.008 + vec2(u_time * 0.01)); 
     
     // REDUCED: Distortion scale lowered for subtler effect
-    vec2 distortedUV = worldUV + vec2(distortNoise) * field * 30.0; 
+    vec2 distortedUV = worldUV + vec2(distortNoise) * field * 20.0; 
 
-    // Electric arcs / filaments on distorted UVs - Slower animation
-    float n = fbm(distortedUV * 0.005 + vec2(0.0, u_time * 0.02));
+    // Steady electric arcs - slowed down significantly
+    float n = fbm(distortedUV * 0.005 + vec2(0.0, u_time * 0.005));
     
     // Steady State Flow
     float flow = field * (0.95 + 0.05 * n);

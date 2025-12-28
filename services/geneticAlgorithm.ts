@@ -38,26 +38,26 @@ for (let y = 0; y < GRID_SIZE; y++) {
 }
 
 export function createRandomGenome(generation: number = 0, targetHue?: number): Genome {
-  // 20% Chance to spawn a "Prophet" bot that adheres to the Nervous Ring topology
-  if (Math.random() < 0.2) {
+  // Rare "Prophet" spawn only in later generations to allow initial colonies to start small
+  if (generation > 8 && Math.random() < 0.05) {
       return createNervousRingGenome(generation, targetHue);
   }
 
-  const genes: CellType[][] = [];
-  for (let y = 0; y < GRID_SIZE; y++) {
-    const row: CellType[] = [];
-    for (let x = 0; x < GRID_SIZE; x++) {
-      const rand = Math.random();
-      if (rand < 0.5) row.push(CellType.EMPTY);
-      else if (rand < 0.7) row.push(CellType.SKIN);
-      else if (rand < 0.9) row.push(CellType.HEART);
-      else row.push(CellType.NEURON); 
-    }
-    genes.push(row);
-  }
+  // Initialize empty grid
+  const genes: CellType[][] = Array(GRID_SIZE).fill(null).map(() => Array(GRID_SIZE).fill(CellType.EMPTY));
   
-  // Ensure center has some structure so it's not empty
-  genes[Math.floor(GRID_SIZE/2)][Math.floor(GRID_SIZE/2)] = CellType.SKIN;
+  // Seed the colony with a minimal 3-node structure (Triangular Base)
+  // This allows the player to "build" the network via growth/evolution
+  const c = Math.floor(GRID_SIZE / 2);
+  
+  // Node 1: Center (Neuron - Processing/Structure)
+  genes[c][c] = CellType.NEURON; 
+  
+  // Node 2: Right (Heart - Motility)
+  genes[c][c+1] = Math.random() > 0.3 ? CellType.HEART : CellType.SKIN;
+  
+  // Node 3: Down (Skin - Support)
+  genes[c+1][c] = CellType.SKIN;
 
   let h: number;
   if (targetHue !== undefined) {
@@ -76,12 +76,12 @@ export function createRandomGenome(generation: number = 0, targetHue?: number): 
     fitness: 0,
     generation,
     color,
-    bioelectricMemory: Math.random(),
+    bioelectricMemory: 0.5 + (Math.random() * 0.4), // Higher plasticity for early bots
     originX: 0, 
     originY: 200
   };
 
-  // Enforce graph connectivity immediately
+  // Enforce graph connectivity immediately (trivial for 3 adjacent nodes, but safe to keep)
   return enforceContiguity(genome);
 }
 
@@ -235,8 +235,8 @@ export function pruneGenome(genome: Genome, retentionRateOrTarget: number = 0.15
         targetSize = Math.floor(activeCells.length * retentionRateOrTarget);
     }
     
-    // Safety clamp (Min 5 to be viable offspring, Max current size)
-    targetSize = Math.max(5, Math.min(activeCells.length, targetSize));
+    // Safety clamp (Min 3 to be viable offspring)
+    targetSize = Math.max(3, Math.min(activeCells.length, targetSize));
 
     // Pick a random seed cell to keep
     const seedIndex = Math.floor(Math.random() * activeCells.length);
@@ -362,8 +362,8 @@ function crossover(parentA: Genome, parentB: Genome, generation: number): Genome
   };
 
   let processed = enforceContiguity(child);
-  // Crossover usually results in large chaotic structures, prune to stable size ~12
-  return pruneGenome(processed, 12); 
+  // Crossover usually results in large chaotic structures, prune to stable size ~8 (smaller than before)
+  return pruneGenome(processed, 8); 
 }
 
 export function mutate(genome: Genome): Genome {
@@ -469,10 +469,8 @@ export function evolvePopulation(population: Genome[], generation: number, maxPo
   const nextB = evolveSubPool(poolB, maxPerGroup);
 
   // CRITICAL FIX: Prevent Extinction via Genetic Drift
-  // If Group A (Native Strain) has died out or drifted into Group B colors,
-  // we must re-seed it to maintain the ecological balance of the simulation.
   if (nextA.length === 0 && maxPerGroup > 0) {
-      // Create a new "Native" progenitor (Cyan hue ~190)
+      // Re-seed Group A
       nextA.push(createRandomGenome(generation, 190));
   }
 
